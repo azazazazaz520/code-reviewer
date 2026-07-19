@@ -14,13 +14,7 @@ def get_review_context(
     changed_files: str = "",
     max_depth: int = 2,
 ) -> str:
-    """获取变更文件的爆炸半径 + 源码片段 (code-review-graph)。
-
-    Args:
-        repo_root: 仓库根目录路径
-        changed_files: 逗号分隔的变更文件列表（为空时自动从 git diff 检测）
-        max_depth: 影响半径深度（默认 2）
-    """
+    """获取变更文件的爆炸半径 + 源码片段 (code-review-graph)。"""
     try:
         from code_review_graph.tools.review import get_review_context as crg_review
 
@@ -36,7 +30,6 @@ def get_review_context(
             repo_root=repo_root,
             detail_level="standard",
         )
-        # 精简输出：只返回关键字段
         ctx = result.get("context", {})
         return str({
             "status": result.get("status"),
@@ -46,7 +39,7 @@ def get_review_context(
             "impacted_nodes_count": len(ctx.get("impacted_nodes", [])),
         })
     except ImportError:
-        return '{"error": "code-review-graph not installed. Run: pip install code-review-graph"}'
+        return '{"error": "code-review-graph not installed"}'
     except Exception as e:
         return str({"error": str(e)})
 
@@ -57,13 +50,7 @@ def get_impact_radius(
     changed_files: str,
     max_depth: int = 2,
 ) -> str:
-    """计算变更文件的爆炸半径——BFS 追踪所有受影响的文件。
-
-    Args:
-        repo_root: 仓库根目录路径
-        changed_files: 逗号分隔的变更文件列表
-        max_depth: 影响半径深度（默认 2）
-    """
+    """计算变更文件的爆炸半径——BFS 追踪所有受影响的文件。"""
     try:
         from code_review_graph.graph import GraphStore
         from code_review_graph.tools._common import _get_store
@@ -80,6 +67,45 @@ def get_impact_radius(
             })
         finally:
             store.close()
+    except ImportError:
+        return '{"error": "code-review-graph not installed"}'
+    except Exception as e:
+        return str({"error": str(e)})
+
+
+@register_tool(name="GetHubNodes", toolset="file")
+def get_hub_nodes(repo_root: str, top_n: int = 10) -> str:
+    """获取代码库中连接度最高的节点（架构热点）。"""
+    try:
+        from code_review_graph.tools.analysis_tools import get_hub_nodes_func
+        result = get_hub_nodes_func(repo_root=repo_root, top_n=top_n)
+        return str(result)
+    except ImportError:
+        return '{"error": "code-review-graph not installed"}'
+    except Exception as e:
+        return str({"error": str(e)})
+
+
+@register_tool(name="GetBridgeNodes", toolset="file")
+def get_bridge_nodes(repo_root: str, top_n: int = 10) -> str:
+    """获取架构咽喉节点（betweenness centrality 最高）。"""
+    try:
+        from code_review_graph.tools.analysis_tools import get_bridge_nodes_func
+        result = get_bridge_nodes_func(repo_root=repo_root, top_n=top_n)
+        return str(result)
+    except ImportError:
+        return '{"error": "code-review-graph not installed"}'
+    except Exception as e:
+        return str({"error": str(e)})
+
+
+@register_tool(name="GetSuggestedQuestions", toolset="file")
+def get_suggested_questions(repo_root: str) -> str:
+    """基于图谱分析自动生成审查问题。"""
+    try:
+        from code_review_graph.tools.analysis_tools import get_suggested_questions_func
+        result = get_suggested_questions_func(repo_root=repo_root)
+        return str(result)
     except ImportError:
         return '{"error": "code-review-graph not installed"}'
     except Exception as e:
