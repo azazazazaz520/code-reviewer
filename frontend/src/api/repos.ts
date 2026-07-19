@@ -6,5 +6,7 @@ export const repoApi = {
   create: (data: { name: string; git_url: string; local_path: string; default_branch: string }) =>
     api.post<Repo>("/repos", data),
   get: (id: string) => api.get<Repo>(`/repos/${id}`),
+  update: (id: string, data: { name: string; git_url: string; local_path: string; default_branch: string }) =>
+    api.put<Repo>(`/repos/${id}`, data),
   remove: (id: string) => api.delete(`/repos/${id}`),
 };

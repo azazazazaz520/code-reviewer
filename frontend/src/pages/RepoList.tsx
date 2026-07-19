@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, Form, Input, Modal, Space, Table, message } from "antd";
+import { Button, Form, Input, Modal, Popconfirm, Space, Table, message } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import type { Repo } from "../types";
@@ -8,6 +8,7 @@ import { repoApi } from "../api/repos";
 export default function RepoList() {
   const [repos, setRepos] = useState<Repo[]>([]);
   const [open, setOpen] = useState(false);
+  const [editing, setEditing] = useState<Repo | null>(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
 
@@ -17,24 +18,50 @@ export default function RepoList() {
     load();
   }, []);
 
-  const handleCreate = async () => {
+  const handleSave = async () => {
     try {
       const values = await form.validateFields();
-      await repoApi.create(values);
-      message.success("仓库已添加");
+      if (editing) {
+        await repoApi.update(editing.id, values);
+        message.success("仓库已更新");
+      } else {
+        await repoApi.create(values);
+        message.success("仓库已添加");
+      }
       setOpen(false);
+      setEditing(null);
       form.resetFields();
       load();
     } catch {
-      // validation failed
+      // validation
     }
+  };
+
+  const handleEdit = (repo: Repo) => {
+    setEditing(repo);
+    form.setFieldsValue(repo);
+    setOpen(true);
+  };
+
+  const handleDelete = async (id: string) => {
+    await repoApi.remove(id);
+    message.success("仓库已删除");
+    load();
   };
 
   return (
     <>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
         <h2>仓库管理</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>
+        <Button
+          type="primary"
+          icon={<PlusOutlined />}
+          onClick={() => {
+            setEditing(null);
+            form.resetFields();
+            setOpen(true);
+          }}
+        >
           添加仓库
         </Button>
       </div>
@@ -49,15 +76,29 @@ export default function RepoList() {
           { title: "默认分支", dataIndex: "default_branch", width: 100 },
           {
             title: "操作",
-            width: 120,
+            width: 200,
             render: (_: unknown, r: Repo) => (
-              <a onClick={() => navigate(`/repos/${r.id}`)}>详情</a>
+              <Space>
+                <a onClick={() => navigate(`/repos/${r.id}`)}>详情</a>
+                <a onClick={() => handleEdit(r)}>编辑</a>
+                <Popconfirm title="确定删除此仓库？关联的审查记录也会被删除" onConfirm={() => handleDelete(r.id)}>
+                  <a style={{ color: "red" }}>删除</a>
+                </Popconfirm>
+              </Space>
             ),
           },
         ]}
       />
 
-      <Modal title="添加仓库" open={open} onOk={handleCreate} onCancel={() => setOpen(false)}>
+      <Modal
+        title={editing ? "编辑仓库" : "添加仓库"}
+        open={open}
+        onOk={handleSave}
+        onCancel={() => {
+          setOpen(false);
+          setEditing(null);
+        }}
+      >
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="名称" rules={[{ required: true }]}>
             <Input />

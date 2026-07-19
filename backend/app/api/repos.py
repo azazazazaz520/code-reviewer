@@ -42,3 +42,17 @@ def delete_repo(repo_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="仓库不存在")
     db.delete(repo)
     db.commit()
+
+
+@router.put("/{repo_id}", response_model=RepoResponse)
+def update_repo(repo_id: str, body: RepoCreate, db: Session = Depends(get_db)):
+    repo = db.query(Repo).filter(Repo.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+    repo.name = body.name
+    repo.git_url = body.git_url
+    repo.local_path = body.local_path
+    repo.default_branch = body.default_branch
+    db.commit()
+    db.refresh(repo)
+    return repo

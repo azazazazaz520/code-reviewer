@@ -6,6 +6,7 @@ import {
   Form,
   Input,
   InputNumber,
+  Popconfirm,
   Radio,
   Space,
   Table,
@@ -51,6 +52,13 @@ export default function RepoDetail() {
     }
   };
 
+  const handleDeleteRepo = async () => {
+    if (!id) return;
+    await repoApi.remove(id);
+    message.success("仓库已删除");
+    navigate("/repos");
+  };
+
   if (!repo) return <Card loading />;
 
   return (
@@ -61,6 +69,9 @@ export default function RepoDetail() {
       <h2>{repo.name}</h2>
       <p>
         {repo.git_url} · 本地: {repo.local_path}
+        <Popconfirm title="确定删除此仓库？关联的审查记录也会被删除" onConfirm={handleDeleteRepo}>
+          <Button danger size="small" style={{ marginLeft: 16 }}>删除仓库</Button>
+        </Popconfirm>
       </p>
 
       <Card title="提交审查" style={{ marginBottom: 24 }}>
