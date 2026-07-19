@@ -41,6 +41,7 @@ class ReviewCreate(BaseModel):
 class ReviewTaskResponse(BaseModel):
     id: str
     repo_id: str
+    repo_name: str | None = None  # 仓库名称，由 API 层填充
     review_type: str
     pr_number: int | None = None
     commit_hash: str | None = None

@@ -49,11 +49,18 @@ def get_overview(db: Session = Depends(get_db)):
 
     # 最近审查
     recent = (
-        db.query(ReviewTask)
+        db.query(ReviewTask, Repo.name)
+        .join(Repo, ReviewTask.repo_id == Repo.id)
         .order_by(ReviewTask.created_at.desc())
         .limit(10)
         .all()
     )
+
+    recent_with_names = []
+    for task, repo_name in recent:
+        item = ReviewTaskResponse.model_validate(task)
+        item.repo_name = repo_name
+        recent_with_names.append(item)
 
     return OverviewStats(
         total_reviews=total,
@@ -61,7 +68,7 @@ def get_overview(db: Session = Depends(get_db)):
         avg_risk_level=avg_risk,
         active_repos=active_repos,
         risk_distribution=risk_dist,
-        recent_reviews=[ReviewTaskResponse.model_validate(r) for r in recent],
+        recent_reviews=recent_with_names,
     )
 
 

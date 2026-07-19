@@ -53,6 +53,7 @@ export default function Dashboard() {
           rowKey="id"
           pagination={false}
           columns={[
+            { title: "仓库", dataIndex: "repo_name", width: 120, ellipsis: true },
             {
               title: "类型",
               dataIndex: "review_type",

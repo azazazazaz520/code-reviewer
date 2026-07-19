@@ -10,6 +10,7 @@ export interface Repo {
 export interface ReviewTask {
   id: string;
   repo_id: string;
+  repo_name?: string;
   review_type: "pr" | "local";
   pr_number: number | null;
   commit_hash: string | null;
