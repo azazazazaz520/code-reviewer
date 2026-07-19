@@ -15,19 +15,9 @@ from langgraph.graph import StateGraph, END
 
 from app.config import settings
 from app.engine.state import ReviewState
-from app.engine.reviewers.style import StyleReviewer
-from app.engine.reviewers.security import SecurityReviewer
-from app.engine.reviewers.base import ReviewerContext
+from app.engine.reviewers import REVIEWER_REGISTRY, ReviewerContext
 from app.engine.tools.get_diff import get_diff, get_changed_files
 from app.engine.tools.read_file import read_file
-
-
-# ─── 审查器注册表 ──────────────────────────────────────
-
-REVIEWER_REGISTRY = {
-    "style_reviewer": StyleReviewer(),
-    "security_reviewer": SecurityReviewer(),
-}
 
 
 # ─── LangGraph Nodes ──────────────────────────────────
@@ -55,20 +45,30 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
 
 
 def _planning_node(state: ReviewState) -> ReviewState:
-    """Node 2: 决定执行哪些 Reviewer。"""
+    """Node 2: 决定执行哪些 Reviewer。双层策略：
+    - 软策略：文件类型规则
+    - 硬触发器：安全关键词 + CRG 热点节点
+    """
     plan = []
     changed = state.get("changed_files", [])
     diff = state.get("raw_diff", "")
 
-    # 硬触发器：文件类型
+    # 文件类型规则
     if any(f.endswith(".py") or f.endswith(".js") or f.endswith(".ts") for f in changed):
         plan.append("style_reviewer")
 
-    # 硬触发器：安全关键词
+    # 安全关键词硬触发器
     security_keywords = ["sql", "password", "token", "secret", "pickle", "yaml.load",
                          "eval(", "exec(", "subprocess", "os.system", "shell=True"]
     if any(kw in diff.lower() for kw in security_keywords):
         plan.append("security_reviewer")
+
+    # CRG 热点触发器：变更触及 hub 节点时强制激活 Security Reviewer
+    if state.get("crg_enabled") and state.get("impact_radius"):
+        impact = state["impact_radius"]
+        if impact.get("impacted_nodes", 0) > 20 or impact.get("changed_nodes", 0) > 5:
+            if "security_reviewer" not in plan:
+                plan.append("security_reviewer")
 
     state["review_plan"] = plan if plan else ["style_reviewer"]
     return state
@@ -77,16 +77,77 @@ def _planning_node(state: ReviewState) -> ReviewState:
 def _collect_context_node(state: ReviewState) -> ReviewState:
     """Node 3: 收集变更文件内容到缓存。
 
-    后续可集成 CRG 爆炸半径分析来优化文件选择。
+    优先使用 CRG 爆炸半径分析（精准 ~15 个文件），
+    降级为逐文件 ReadFile（最多 20 个）。
     """
     repo_path = state.get("repo_id", ".")
+    changed_files = state.get("changed_files", [])
     cache: dict[str, str] = {}
-    for file_path in state.get("changed_files", [])[:20]:  # 限制 20 个文件
+
+    # 尝试 CRG 爆炸半径分析
+    if _try_crg_context(state, repo_path, changed_files, cache):
+        state["crg_enabled"] = True
+        state["file_context_cache"] = cache
+        return state
+
+    # 降级：逐文件读取
+    state["crg_enabled"] = False
+    for file_path in changed_files[:20]:
         full_path = Path(repo_path) / file_path
         content = read_file(str(full_path), start_line=1, max_lines=200)
         cache[file_path] = content
     state["file_context_cache"] = cache
     return state
+
+
+def _try_crg_context(
+    state: ReviewState, repo_path: str, changed_files: list[str], cache: dict[str, str]
+) -> bool:
+    """Try CRG blast-radius analysis. Returns True on success, False on any failure."""
+    try:
+        from code_review_graph.tools.review import get_review_context
+
+        result = get_review_context(
+            changed_files=changed_files if changed_files else None,
+            max_depth=2,
+            include_source=True,
+            max_lines_per_file=200,
+            repo_root=repo_path,
+            detail_level="standard",
+        )
+
+        if result.get("status") != "ok":
+            return False
+
+        ctx = result.get("context", {})
+        impacted_files = ctx.get("impacted_files", [])
+        source_snippets = ctx.get("source_snippets", {})
+
+        # 填充缓存：优先用 CRG 返回的源码片段，缺失的补读
+        for fp in impacted_files[:20]:
+            if fp in source_snippets:
+                cache[fp] = source_snippets[fp]
+            else:
+                full_path = Path(repo_path) / fp
+                cache[fp] = read_file(str(full_path), start_line=1, max_lines=200)
+
+        # 确保原始变更文件也在缓存中
+        for fp in changed_files:
+            if fp not in cache:
+                full_path = Path(repo_path) / fp
+                cache[fp] = read_file(str(full_path), start_line=1, max_lines=200)
+
+        state["impact_radius"] = {
+            "changed_nodes": len(ctx.get("changed_nodes", [])),
+            "impacted_nodes": len(ctx.get("impacted_nodes", [])),
+            "impacted_files": len(impacted_files),
+        }
+        return True
+
+    except ImportError:
+        return False
+    except Exception:
+        return False
 
 
 def _run_reviews_node(state: ReviewState) -> ReviewState:
@@ -252,7 +313,7 @@ def run_workflow(
         "need_more_context": False,
         "summary": "",
         "risk_level": "low",
-        "crg_enabled": False,
+        "crg_enabled": True,
         "impact_radius": None,
     }
 
