@@ -40,8 +40,8 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
         # PR 模式：GitHub API
         diff_text = get_pr_diff(git_url, pr_number)
         files_text = get_pr_changed_files(git_url, pr_number)
-        if diff_text.startswith("Error:"):
-            raise RuntimeError(diff_text)
+        if diff_text.startswith("Error:") or files_text.startswith("Error:"):
+            raise RuntimeError(diff_text if diff_text.startswith("Error:") else files_text)
     else:
         # Local 模式：本地 git
         base = commit_hash + "~1" if commit_hash else "HEAD~1"
