@@ -5,7 +5,7 @@ from app.engine.reviewers.base import BaseReviewer, ReviewerContext
 
 class SecurityReviewer(BaseReviewer):
     name = "security_reviewer"
-    required_tools = ["ReadFile"]
+    required_tools = ["ReadFile", "GetHubNodes", "GetBridgeNodes"]
 
     system_prompt = """你是一个资深安全审查专家。请审查以下代码变更，重点检测：
 

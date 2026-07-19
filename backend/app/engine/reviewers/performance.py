@@ -7,7 +7,7 @@ from app.engine.reviewers.base import BaseReviewer, ReviewerContext
 
 class PerformanceReviewer(BaseReviewer):
     name = "performance_reviewer"
-    required_tools = ["ReadFile"]
+    required_tools = ["ReadFile", "GetHubNodes", "GetImpactRadius"]
 
     def __init__(self):
         super().__init__()

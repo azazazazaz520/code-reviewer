@@ -124,6 +124,7 @@ def _run_review_workflow(task_id: str):
         # 运行审查引擎
         result = run_workflow(
             repo_path=repo.local_path,
+            git_url=repo.git_url,
             review_type=task.review_type,
             pr_number=task.pr_number,
             commit_hash=task.commit_hash,

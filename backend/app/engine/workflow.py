@@ -17,6 +17,7 @@ from app.config import settings
 from app.engine.state import ReviewState
 from app.engine.reviewers import REVIEWER_REGISTRY, ReviewerContext
 from app.engine.tools.get_diff import get_diff, get_changed_files
+from app.engine.tools.get_pr_diff import get_pr_diff, get_pr_changed_files
 from app.engine.tools.read_file import read_file
 
 
@@ -24,17 +25,30 @@ from app.engine.tools.read_file import read_file
 
 
 def _load_pr_node(state: ReviewState) -> ReviewState:
-    """Node 1: 加载 PR diff 和变更文件列表。"""
-    repo_path = state.get("repo_id", ".")
-    commit_hash = state.get("commit_hash")
-    base = commit_hash + "~1" if commit_hash else "HEAD~1"
+    """Node 1: 加载 PR diff 和变更文件列表。
 
-    diff_text = get_diff(repo_path, base)
-    if diff_text.startswith("Error: fatal:"):
-        diff_text = get_diff(repo_path, "HEAD")
-        files_text = get_changed_files(repo_path, "HEAD")
+    PR 模式：从 GitHub API 获取 PR diff。
+    Local 模式：从本地 git 获取 diff。
+    """
+    review_type = state.get("review_type", "local")
+    repo_path = state.get("repo_id", ".")
+    pr_number = state.get("pr_number")
+    commit_hash = state.get("commit_hash")
+    git_url = state.get("git_url", "")
+
+    if review_type == "pr" and pr_number and git_url:
+        # PR 模式：GitHub API
+        diff_text = get_pr_diff(git_url, pr_number)
+        files_text = get_pr_changed_files(git_url, pr_number)
     else:
-        files_text = get_changed_files(repo_path, base)
+        # Local 模式：本地 git
+        base = commit_hash + "~1" if commit_hash else "HEAD~1"
+        diff_text = get_diff(repo_path, base)
+        if diff_text.startswith("Error: fatal:"):
+            diff_text = get_diff(repo_path, "HEAD")
+            files_text = get_changed_files(repo_path, "HEAD")
+        else:
+            files_text = get_changed_files(repo_path, base)
 
     state["raw_diff"] = diff_text
     state["changed_files"] = [
@@ -56,6 +70,8 @@ def _planning_node(state: ReviewState) -> ReviewState:
     # 文件类型规则
     if any(f.endswith(".py") or f.endswith(".js") or f.endswith(".ts") for f in changed):
         plan.append("style_reviewer")
+    if any(f.endswith(".py") for f in changed):
+        plan.append("performance_reviewer")
 
     # 安全关键词硬触发器
     security_keywords = ["sql", "password", "token", "secret", "pickle", "yaml.load",
@@ -280,9 +296,9 @@ def _build_graph() -> StateGraph:
     builder.add_node("generate_report", _generate_report_node)
 
     builder.set_entry_point("load_pr")
-    builder.add_edge("load_pr", "planning")
-    builder.add_edge("planning", "collect_context")
-    builder.add_edge("collect_context", "run_reviews")
+    builder.add_edge("load_pr", "collect_context")
+    builder.add_edge("collect_context", "planning")
+    builder.add_edge("planning", "run_reviews")
     builder.add_edge("run_reviews", "reflection")
 
     builder.add_conditional_edges(
@@ -303,6 +319,7 @@ _graph = _build_graph()
 
 def run_workflow(
     repo_path: str,
+    git_url: str = "",
     review_type: str = "pr",
     pr_number: int | None = None,
     commit_hash: str | None = None,
@@ -311,6 +328,7 @@ def run_workflow(
     """运行审查 Workflow，返回报告 dict。"""
     initial_state: ReviewState = {
         "repo_id": repo_path,
+        "git_url": git_url,
         "review_type": review_type,
         "pr_number": pr_number,
         "commit_hash": commit_hash,

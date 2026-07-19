@@ -10,6 +10,7 @@ class ReviewState(TypedDict, total=False):
     pr_number: int | None
     commit_hash: str | None
     base_branch: str | None
+    git_url: str  # GitHub 仓库 URL（PR 模式用）
 
     # Diff 和变更文件
     raw_diff: str

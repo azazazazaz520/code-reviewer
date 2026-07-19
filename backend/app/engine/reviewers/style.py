@@ -5,7 +5,7 @@ from app.engine.reviewers.base import BaseReviewer, ReviewerContext
 
 class StyleReviewer(BaseReviewer):
     name = "style_reviewer"
-    required_tools = ["ReadFile"]
+    required_tools = ["ReadFile", "GetHubNodes", "GetSuggestedQuestions"]
 
     system_prompt = """你是一个资深代码审查专家，专注于代码风格和质量。请审查以下代码变更，检测：
 
