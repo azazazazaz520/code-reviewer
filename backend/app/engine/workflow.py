@@ -106,7 +106,19 @@ def _try_crg_context(
     """Try CRG blast-radius analysis. Returns True on success, False on any failure."""
     try:
         from code_review_graph.tools.review import get_review_context
+        from code_review_graph.main import main as crg_build
+    except ImportError:
+        return False
 
+    # 图谱生命周期：如果 .code-review-graph/ 不存在，自动构建
+    crg_dir = Path(repo_path) / ".code-review-graph"
+    if not crg_dir.exists():
+        try:
+            crg_build(["build"], standalone_mode=False)
+        except Exception:
+            return False
+
+    try:
         result = get_review_context(
             changed_files=changed_files if changed_files else None,
             max_depth=2,
@@ -115,7 +127,6 @@ def _try_crg_context(
             repo_root=repo_path,
             detail_level="standard",
         )
-
         if result.get("status") != "ok":
             return False
 
