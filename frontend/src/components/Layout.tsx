@@ -2,7 +2,7 @@ import { Layout as AntLayout, Menu } from "antd";
 import { DashboardOutlined, GithubOutlined } from "@ant-design/icons";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 
-const { Sider, Content } = AntLayout;
+const { Sider } = AntLayout;
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -14,37 +14,47 @@ export default function Layout() {
   ];
 
   return (
-    <AntLayout style={{ minHeight: "100vh" }}>
-      <Sider collapsible>
-        <div
-          style={{
-            height: 48,
-            margin: 16,
-            color: "#fff",
-            fontSize: 18,
-            fontWeight: 700,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
+    <div style={{ display: "flex", minHeight: "100vh" }}>
+      <AntLayout hasSider style={{ flex: "0 0 auto", background: "transparent" }}>
+        <Sider
+          collapsible
+          style={{ height: "100vh", position: "sticky", top: 0 }}
         >
-          Code Reviewer
-        </div>
-        <Menu
-          theme="dark"
-          mode="inline"
-          selectedKeys={[location.pathname]}
-          items={items}
-          onClick={({ key }) => navigate(key)}
-        />
-      </Sider>
-      <AntLayout>
-        <Content
-          style={{ margin: 24, padding: 24, background: "var(--background)" }}
-        >
-          <Outlet />
-        </Content>
+          <div
+            style={{
+              height: 48,
+              margin: 16,
+              color: "#fff",
+              fontSize: 18,
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            Code Reviewer
+          </div>
+          <Menu
+            theme="dark"
+            mode="inline"
+            selectedKeys={[location.pathname]}
+            items={items}
+            onClick={({ key }) => navigate(key)}
+          />
+        </Sider>
       </AntLayout>
-    </AntLayout>
+
+      <main
+        style={{
+          flex: 1,
+          minWidth: 0,
+          padding: 24,
+          background: "var(--background)",
+          overflow: "auto",
+        }}
+      >
+        <Outlet />
+      </main>
+    </div>
   );
 }
