@@ -39,33 +39,26 @@ def get_overview(db: Session = Depends(get_db)):
     for r in reports:
         risk_dist[r.risk_level] = risk_dist.get(r.risk_level, 0) + 1
 
-    avg_risk = "low"
-    if risk_dist.get("critical", 0) > 0:
-        avg_risk = "critical"
-    elif risk_dist.get("high", 0) > 0:
-        avg_risk = "high"
-    elif risk_dist.get("medium", 0) > 0:
-        avg_risk = "medium"
-
-    # 最近审查
-    recent = (
-        db.query(ReviewTask, Repo.name)
+    # 最近审查（JOIN repo 获取 repo_name，LEFT JOIN report 获取 risk_level）
+    recent_rows = (
+        db.query(ReviewTask, Repo.name, ReviewReport.risk_level)
         .join(Repo, ReviewTask.repo_id == Repo.id)
+        .outerjoin(ReviewReport, ReviewReport.task_id == ReviewTask.id)
         .order_by(ReviewTask.created_at.desc())
         .limit(10)
         .all()
     )
 
     recent_with_names = []
-    for task, repo_name in recent:
+    for task, repo_name, risk_level in recent_rows:
         item = ReviewTaskResponse.model_validate(task)
         item.repo_name = repo_name
+        item.risk_level = risk_level
         recent_with_names.append(item)
 
     return OverviewStats(
         total_reviews=total,
         reviews_this_month=monthly,
-        avg_risk_level=avg_risk,
         active_repos=active_repos,
         risk_distribution=risk_dist,
         recent_reviews=recent_with_names,
