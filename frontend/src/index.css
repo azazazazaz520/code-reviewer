@@ -54,6 +54,10 @@ body {
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
+  --color-severity-critical: var(--severity-critical);
+  --color-severity-high: var(--severity-high);
+  --color-severity-medium: var(--severity-medium);
+  --color-severity-low: var(--severity-low);
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -156,19 +160,7 @@ body {
   }
 }
 
-@utility bg-severity-critical { background-color: var(--severity-critical); }
-@utility bg-severity-high { background-color: var(--severity-high); }
-@utility bg-severity-medium { background-color: var(--severity-medium); }
-@utility bg-severity-low { background-color: var(--severity-low); }
-@utility text-severity-critical { color: var(--severity-critical); }
-@utility text-severity-high { color: var(--severity-high); }
-@utility text-severity-medium { color: var(--severity-medium); }
-@utility text-severity-low { color: var(--severity-low); }
 @utility border-l-severity-critical { border-left-color: var(--severity-critical); }
 @utility border-l-severity-high { border-left-color: var(--severity-high); }
 @utility border-l-severity-medium { border-left-color: var(--severity-medium); }
 @utility border-l-severity-low { border-left-color: var(--severity-low); }
-@utility border-severity-critical { border-color: var(--severity-critical); }
-@utility border-severity-high { border-color: var(--severity-high); }
-@utility border-severity-medium { border-color: var(--severity-medium); }
-@utility border-severity-low { border-color: var(--severity-low); }

@@ -187,19 +187,19 @@ export default function ReviewDetail() {
           <div className="text-xs text-muted-foreground mt-1">涉及文件</div>
         </div>
         <div className="rounded-lg border bg-card p-4 text-center">
-          <div className="text-2xl font-bold text-[var(--severity-critical)]">
+          <div className="text-2xl font-bold text-severity-critical">
             {report.stats.by_severity.critical || 0}
           </div>
           <div className="text-xs text-muted-foreground mt-1">严重</div>
         </div>
         <div className="rounded-lg border bg-card p-4 text-center">
-          <div className="text-2xl font-bold text-[var(--severity-high)]">
+          <div className="text-2xl font-bold text-severity-high">
             {report.stats.by_severity.high || 0}
           </div>
           <div className="text-xs text-muted-foreground mt-1">高危</div>
         </div>
         <div className="rounded-lg border bg-card p-4 text-center">
-          <div className="text-2xl font-bold text-[var(--severity-medium)]">
+          <div className="text-2xl font-bold text-severity-medium">
             {report.stats.by_severity.medium || 0}
           </div>
           <div className="text-xs text-muted-foreground mt-1">中危</div>

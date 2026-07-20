@@ -44,7 +44,7 @@ export default function ReviewProgress({
   const isFailed = !logPolling && !isComplete && logs.length > 0;
 
   const statusColor = isComplete
-    ? "text-[var(--severity-low)]"
+    ? "text-severity-low"
     : isFailed
       ? "text-destructive"
       : "text-primary";
@@ -102,7 +102,7 @@ export default function ReviewProgress({
           )}
 
           {isComplete && (
-            <div className="text-[var(--severity-low)] font-semibold mt-1">
+            <div className="text-severity-low font-semibold mt-1">
               审查完成
             </div>
           )}
