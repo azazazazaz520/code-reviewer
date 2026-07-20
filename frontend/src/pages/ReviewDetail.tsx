@@ -57,7 +57,18 @@ export default function ReviewDetail() {
       </Button>
 
       {!report && polling && <Card loading title="审查进行中..." />}
-      {!report && !polling && <Card>未找到报告</Card>}
+      {!report && !polling && task?.status === "failed" && (
+        <Card
+          title="审查失败"
+          style={{ borderColor: "#ff4d4f" }}
+          headStyle={{ color: "#ff4d4f" }}
+        >
+          <Typography.Paragraph type="danger">
+            {task.error_message || "未知错误"}
+          </Typography.Paragraph>
+        </Card>
+      )}
+      {!report && !polling && task?.status !== "failed" && <Card>未找到报告</Card>}
 
       {report && (
         <>
