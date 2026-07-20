@@ -143,9 +143,6 @@ def list_commits(repo_id: str, limit: int = 20, db: Session = Depends(get_db)):
             stderr = (result.stderr or "").strip()
             raise HTTPException(status_code=500, detail=f"git log 执行失败: {stderr}")
 
-        if not result.stdout:
-            return []
-
         commits: list[CommitItem] = []
         for line in result.stdout.strip().split("\n"):
             if not line:
