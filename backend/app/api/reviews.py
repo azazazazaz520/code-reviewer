@@ -5,13 +5,15 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.models.base import get_db
-from app.models.repo import Repo, ReviewTask, ReviewReport
+from app.models.repo import Repo, ReviewTask, ReviewReport, ReviewLog
 from app.models.schemas import (
     ReviewCreate,
     ReviewTaskResponse,
     ReviewReportResponse,
     ReportContent,
+    ReviewLogResponse,
 )
+from app.engine.llm import set_log_hook
 
 router = APIRouter(prefix="/api", tags=["reviews"])
 
@@ -121,6 +123,29 @@ def _run_review_workflow(task_id: str):
         if not repo:
             raise ValueError("仓库不存在")
 
+        # 注入日志 hook
+        def log_hook(step: str, level: str, message: str,
+                     tool_name: str | None = None, tool_args: str | None = None):
+            try:
+                log_entry = ReviewLog(
+                    task_id=task_id,
+                    step=step,
+                    level=level,
+                    message=message,
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                )
+                db.add(log_entry)
+                db.commit()
+            except Exception:
+                pass  # 日志写入失败不影响审查流程
+
+        set_log_hook(log_hook)
+
+        # 写入开始日志
+        log_hook(step="load_pr", level="info",
+                 message=f"开始审查 (type={task.review_type})")
+
         # 运行审查引擎
         result = run_workflow(
             repo_path=repo.local_path,
@@ -129,7 +154,11 @@ def _run_review_workflow(task_id: str):
             pr_number=task.pr_number,
             commit_hash=task.commit_hash,
             base_branch=task.base_branch,
+            log_hook=log_hook,
         )
+
+        # 完成日志
+        log_hook(step="generate_report", level="info", message="审查完成")
 
         report = ReviewReport(
             task_id=task.id,
@@ -152,4 +181,20 @@ def _run_review_workflow(task_id: str):
             task.completed_at = datetime.now(UTC)
             db.commit()
     finally:
+        set_log_hook(None)
         db.close()
+
+
+@router.get("/reviews/{task_id}/logs", response_model=list[ReviewLogResponse])
+def get_review_logs(task_id: str, db: Session = Depends(get_db)):
+    """获取审查任务的实时日志。"""
+    task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+    if not task:
+        raise HTTPException(status_code=404, detail="审查任务不存在")
+
+    return (
+        db.query(ReviewLog)
+        .filter(ReviewLog.task_id == task_id)
+        .order_by(ReviewLog.created_at.asc())
+        .all()
+    )
