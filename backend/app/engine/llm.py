@@ -9,6 +9,14 @@ import json
 from openai import OpenAI
 
 from app.config import settings
+from typing import Callable
+
+_log_hook: Callable | None = None
+
+
+def set_log_hook(hook: Callable | None):
+    global _log_hook
+    _log_hook = hook
 
 
 class LLMProvider:
@@ -98,6 +106,23 @@ class LLMProvider:
                 for tc in result["tool_calls"]:
                     handler = tool_handlers.get(tc["name"])
                     tool_result = handler(**tc["arguments"]) if handler else json.dumps({"error": f"unknown tool: {tc['name']}"})
+
+                    # 日志插桩
+                    if _log_hook:
+                        try:
+                            args_str = json.dumps(tc["arguments"], ensure_ascii=False)
+                            if len(args_str) > 200:
+                                args_str = args_str[:197] + "..."
+                        except Exception:
+                            args_str = str(tc["arguments"])[:200]
+                        _log_hook(
+                            step="tool_call",
+                            level="info",
+                            message=f"{tc['name']}: {args_str[:80]}",
+                            tool_name=tc["name"],
+                            tool_args=args_str,
+                        )
+
                     msgs.append({
                         "role": "tool",
                         "tool_call_id": tc["id"],
