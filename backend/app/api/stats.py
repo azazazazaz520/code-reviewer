@@ -9,6 +9,9 @@ from app.models.schemas import (
     OverviewStats,
     RepoStats,
     HotspotItem,
+    HeatmapResponse,
+    HeatmapRepoRow,
+    HeatmapCell,
 )
 from app.api.reviews import ReviewTaskResponse
 
@@ -103,3 +106,87 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
         hotspots=hotspots,
         recent_reviews=[ReviewTaskResponse.model_validate(r) for r in recent],
     )
+
+
+@router.get("/heatmap", response_model=HeatmapResponse)
+def get_heatmap(db: Session = Depends(get_db)):
+    """仓库×月份 风险热力图数据。"""
+    from collections import defaultdict
+
+    # 获取所有 repos
+    repos = db.query(Repo).order_by(Repo.name).all()
+
+    # 获取所有已完成的审查报告（JOIN task 获取 repo_id 和 completed_at）
+    rows = (
+        db.query(
+            ReviewTask.repo_id,
+            Repo.name,
+            ReviewTask.completed_at,
+            ReviewReport.risk_level,
+            func.count(ReviewReport.id).label("cnt"),
+        )
+        .join(Repo, ReviewTask.repo_id == Repo.id)
+        .join(ReviewReport, ReviewReport.task_id == ReviewTask.id)
+        .filter(ReviewTask.status == "done")
+        .group_by(ReviewTask.repo_id, func.strftime("%Y-%m", ReviewTask.completed_at))
+        .order_by(ReviewTask.repo_id, func.strftime("%Y-%m", ReviewTask.completed_at))
+        .all()
+    )
+
+    # 构建 repo → month → (count, worst_risk) 映射
+    # severity 权重：critical=4, high=3, medium=2, low=1
+    severity_order = {"low": 1, "medium": 2, "high": 3, "critical": 4}
+
+    # repo_key -> {month: (count, worst_risk)}
+    data: dict[str, dict[str, tuple[int, str | None]]] = defaultdict(dict)
+    all_months_set: set[str] = set()
+
+    for repo_id, repo_name, completed_at, risk_level, cnt in rows:
+        month = completed_at.strftime("%Y-%m")
+        all_months_set.add(month)
+        key = repo_id
+        existing = data[key].get(month)
+        if existing:
+            prev_cnt, prev_worst = existing
+            new_cnt = prev_cnt + cnt
+            # 保留更严重的 risk_level
+            if prev_worst is None or severity_order.get(risk_level, 0) > severity_order.get(prev_worst, 0):
+                new_worst = risk_level
+            else:
+                new_worst = prev_worst
+            data[key][month] = (new_cnt, new_worst)
+        else:
+            data[key][month] = (cnt, risk_level)
+
+    # 生成月份列表（最近 12 个月，包含有数据的月份）
+    from datetime import datetime, UTC
+    now = datetime.now(UTC)
+    months = []
+    for i in range(11, -1, -1):
+        m = now.month - i
+        y = now.year
+        if m <= 0:
+            m += 12
+            y -= 1
+        months.append(f"{y}-{m:02d}")
+    # 确保有数据的月份都在列表中
+    for m in sorted(all_months_set):
+        if m not in months:
+            months.append(m)
+    months.sort()
+
+    # 构建响应
+    repo_rows: list[HeatmapRepoRow] = []
+    for repo in repos:
+        cells: list[HeatmapCell] = []
+        repo_data = data.get(repo.id, {})
+        for month in months:
+            entry = repo_data.get(month)
+            if entry:
+                cnt, worst = entry
+                cells.append(HeatmapCell(month=month, review_count=cnt, worst_risk=worst))
+            else:
+                cells.append(HeatmapCell(month=month, review_count=0, worst_risk=None))
+        repo_rows.append(HeatmapRepoRow(repo_id=repo.id, repo_name=repo.name, cells=cells))
+
+    return HeatmapResponse(months=months, repos=repo_rows)
