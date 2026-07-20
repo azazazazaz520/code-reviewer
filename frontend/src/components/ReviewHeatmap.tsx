@@ -1,63 +1,14 @@
-import { Table, Tooltip } from "antd";
-import type { HeatmapData, HeatmapRepoRow, HeatmapCell } from "../types";
-import type { ColumnsType } from "antd/es/table";
-
-const riskColors: Record<string, string> = {
-  low: "#52c41a",
-  medium: "#faad14",
-  high: "#fa8c16",
-  critical: "#ff4d4f",
-};
-
-const emptyColor = "#f0f0f0";
+import type { HeatmapData, HeatmapRepoRow } from "../types";
 
 const monthLabel = (month: string) => {
   const [, m] = month.split("-");
   return `${parseInt(m, 10)}月`;
 };
 
-interface HeatmapCellProps {
-  cell: HeatmapCell;
-  repoName: string;
-  onClick: () => void;
-}
-
-function HeatmapCellView({ cell, repoName, onClick }: HeatmapCellProps) {
-  const color = cell.worst_risk ? riskColors[cell.worst_risk] || emptyColor : emptyColor;
-  const tooltip = cell.review_count > 0
-    ? `${repoName} — ${cell.month}\n审查 ${cell.review_count} 次 · 最高风险: ${cell.worst_risk ?? "—"}`
-    : `${repoName} — ${cell.month}\n无审查`;
-
-  return (
-    <Tooltip title={<span style={{ whiteSpace: "pre-line" }}>{tooltip}</span>}>
-      <div
-        onClick={onClick}
-        style={{
-          width: 40,
-          height: 40,
-          backgroundColor: color,
-          borderRadius: 4,
-          cursor: cell.review_count > 0 ? "pointer" : "default",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontSize: 11,
-          color: cell.worst_risk ? "#fff" : "#bbb",
-          fontWeight: 600,
-          transition: "transform 0.15s",
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.transform = "scale(1.15)";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.transform = "scale(1)";
-        }}
-      >
-        {cell.review_count > 0 ? cell.review_count : ""}
-      </div>
-    </Tooltip>
-  );
-}
+const severityVar = (risk: string | null) => {
+  if (!risk) return undefined;
+  return `var(--severity-${risk})`;
+};
 
 interface Props {
   data: HeatmapData | null;
@@ -66,45 +17,94 @@ interface Props {
 
 export default function ReviewHeatmap({ data, onCellClick }: Props) {
   if (!data || data.repos.length === 0) {
-    return <div style={{ color: "#999", padding: 24, textAlign: "center" }}>暂无审查数据</div>;
+    return (
+      <div className="py-6 text-center text-muted-foreground">暂无审查数据</div>
+    );
   }
 
-  const columns: ColumnsType<HeatmapRepoRow> = [
-    {
-      title: "仓库",
-      dataIndex: "repo_name",
-      key: "repo",
-      fixed: "left",
-      width: 140,
-      ellipsis: true,
-    },
-    ...data.months.map((month) => ({
-      title: monthLabel(month),
-      key: month,
-      width: 56,
-      align: "center" as const,
-      render: (_: unknown, repo: HeatmapRepoRow) => {
-        const cell = repo.cells.find((c) => c.month === month);
-        if (!cell) return <div style={{ width: 40, height: 40 }} />;
-        return (
-          <HeatmapCellView
-            cell={cell}
-            repoName={repo.repo_name}
-            onClick={() => cell.review_count > 0 && onCellClick(repo.repo_id, month)}
-          />
-        );
-      },
-    })),
-  ];
-
   return (
-    <Table
-      dataSource={data.repos}
-      rowKey="repo_id"
-      columns={columns}
-      pagination={false}
-      scroll={{ x: "max-content" }}
-      size="small"
-    />
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr>
+            <th className="text-left font-medium text-muted-foreground px-2 py-1 w-36">
+              仓库
+            </th>
+            {data.months.map((month) => (
+              <th
+                key={month}
+                className="text-center font-medium text-muted-foreground px-1 py-1 w-14 text-xs"
+              >
+                {monthLabel(month)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.repos.map((repo: HeatmapRepoRow) => (
+            <tr key={repo.repo_id}>
+              <td className="px-2 py-1 truncate max-w-36" title={repo.repo_name}>
+                {repo.repo_name}
+              </td>
+              {data.months.map((month) => {
+                const cell = repo.cells.find((c) => c.month === month);
+                if (!cell) return <td key={month} className="px-1 py-1" />;
+                const bg = cell.worst_risk
+                  ? severityVar(cell.worst_risk)
+                  : "var(--muted)";
+                return (
+                  <td key={month} className="px-1 py-1">
+                    <div
+                      onClick={() =>
+                        cell.review_count > 0 &&
+                        onCellClick(repo.repo_id, month)
+                      }
+                      title={
+                        cell.review_count > 0
+                          ? `${repo.repo_name} — ${cell.month}\n审查 ${cell.review_count} 次 · 最高风险: ${cell.worst_risk ?? "—"}`
+                          : `${repo.repo_name} — ${cell.month}\n无审查`
+                      }
+                      style={{
+                        width: 36,
+                        height: 36,
+                        backgroundColor: bg,
+                        opacity: cell.review_count > 0 ? 1 : 0.4,
+                        cursor: cell.review_count > 0 ? "pointer" : "default",
+                        borderRadius: 4,
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 11,
+                        color: cell.worst_risk ? "#fff" : "var(--muted-foreground)",
+                        fontWeight: 600,
+                        margin: "0 auto",
+                        transition: "transform 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLElement).style.transform = "scale(1.15)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLElement).style.transform = "scale(1)";
+                      }}
+                    >
+                      {cell.review_count > 0 ? cell.review_count : ""}
+                    </div>
+                  </td>
+                );
+              })}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
+        <span>少</span>
+        <span className="w-3 h-3 rounded-sm bg-muted opacity-40" />
+        <span className="w-3 h-3 rounded-sm bg-severity-low" />
+        <span className="w-3 h-3 rounded-sm bg-severity-medium" />
+        <span className="w-3 h-3 rounded-sm bg-severity-high" />
+        <span className="w-3 h-3 rounded-sm bg-severity-critical" />
+        <span>多</span>
+      </div>
+    </div>
   );
 }
