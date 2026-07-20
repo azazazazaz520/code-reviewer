@@ -1,37 +1,33 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Button, Card, Collapse, Descriptions, Space, Tag, Typography, message } from "antd";
-import { CopyOutlined } from "@ant-design/icons";
+import { ChevronLeft, TriangleAlert } from "lucide-react";
 import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
 import { reviewApi } from "../api/reviews";
+import { Badge } from "../components/ui/badge";
+import { Button } from "../components/ui/button";
+import { Separator } from "../components/ui/separator";
+import { Skeleton } from "../components/ui/skeleton";
+import FindingCard from "../components/FindingCard";
 import ReviewProgress from "../components/ReviewProgress";
+import { getSeverityConfig } from "../lib/severity";
 
-const severityColors: Record<string, string> = {
-  critical: "red",
-  high: "orange",
-  medium: "gold",
-  low: "green",
-};
-const severityLabels: Record<string, string> = {
-  critical: "🔴 严重",
-  high: "🟠 高危",
-  medium: "🟡 中危",
-  low: "🟢 低危",
-};
+const riskVariantMap: Record<string, "critical" | "high" | "medium" | "low"> =
+  {
+    low: "low",
+    medium: "medium",
+    high: "high",
+    critical: "critical",
+  };
 
-const riskColors: Record<string, string> = {
-  low: "green",
-  medium: "gold",
-  high: "orange",
-  critical: "red",
-};
-
-function copyFinding(f: Finding) {
-  const text = `[${f.severity.toUpperCase()}] ${f.file}:${f.line} — ${f.title}\n原因：${f.reason}\n建议：${f.suggestion}`;
-  navigator.clipboard.writeText(text).then(
-    () => message.success("已复制到剪贴板"),
-    () => message.error("复制失败"),
-  );
+function groupFindingsBySeverity(findings: Finding[]) {
+  const groups: Record<string, Finding[]> = {
+    critical: [],
+    high: [],
+    medium: [],
+    low: [],
+  };
+  findings.forEach((f) => groups[f.severity]?.push(f));
+  return groups;
 }
 
 export default function ReviewDetail() {
@@ -43,179 +39,222 @@ export default function ReviewDetail() {
   const [filterSeverity, setFilterSeverity] = useState<string | null>(null);
   const [logs, setLogs] = useState<ReviewLog[]>([]);
   const [logPolling, setLogPolling] = useState(true);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!id) return;
 
     const fetchAll = () => {
       reviewApi.status(id).then((r) => setTask(r.data));
-
       reviewApi.report(id).then((r) => {
         if (r.data.report) setReport(r.data.report);
         if (r.data.status !== "pending" && r.data.status !== "running") {
           setPolling(false);
         }
       });
-
       reviewApi.logs(id).then((r) => {
         setLogs(r.data);
-        // 如果已有最终日志且不再 loading，停止日志轮询
         const hasComplete = r.data.some(
-          (l: ReviewLog) => l.message === "审查完成" || l.level === "error" && l.step === "generate_report"
+          (l: ReviewLog) =>
+            l.message === "审查完成" ||
+            (l.level === "error" && l.step === "generate_report"),
         );
-        if (hasComplete) {
-          setLogPolling(false);
-        }
+        if (hasComplete) setLogPolling(false);
       });
     };
 
     fetchAll();
+    setLoading(false);
     const interval = setInterval(fetchAll, 2000);
-
     return () => clearInterval(interval);
   }, [id]);
 
-  const findingsBySeverity = (findings: Finding[]) => {
-    const groups: Record<string, Finding[]> = { critical: [], high: [], medium: [], low: [] };
-    findings.forEach((f) => groups[f.severity]?.push(f));
-    return groups;
-  };
-
-  if (!report && polling) return (
-    <ReviewProgress logs={logs} logPolling={logPolling} />
-  );
-
-  if (!report && !polling && task?.status === "failed") {
+  // ── Loading state ──
+  if (loading && polling) {
     return (
-      <>
-        <Button onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>← 返回</Button>
-        <Card
-          title="审查失败"
-          style={{ borderColor: "#ff4d4f" }}
-          headStyle={{ color: "#ff4d4f" }}
-        >
-          <Typography.Paragraph type="danger">
-            {task.error_message || "未知错误"}
-          </Typography.Paragraph>
-        </Card>
-      </>
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-24" />
+        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
     );
   }
 
+  // ── Still polling, no report yet ──
+  if (!report && polling) {
+    return <ReviewProgress logs={logs} logPolling={logPolling} />;
+  }
+
+  // ── Failed state ──
+  if (!report && !polling && task?.status === "failed") {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
+          <h2 className="text-lg font-semibold text-destructive flex items-center gap-2">
+            <TriangleAlert className="h-5 w-5" />
+            审查失败
+          </h2>
+          <p className="text-destructive/80 mt-2">
+            {task.error_message || "未知错误"}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // ── No report, not polling, not failed ──
   if (!report && !polling && task?.status !== "failed") {
     return (
-      <>
-        <Button onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>← 返回</Button>
-        <Card>未找到报告</Card>
-      </>
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <div className="rounded-lg border p-6 text-center text-muted-foreground">
+          未找到报告
+        </div>
+      </div>
     );
   }
 
   if (!report) return null;
 
-  const grouped = findingsBySeverity(report.findings);
-  const severityEntries = Object.entries(grouped).filter(([, f]) => f.length > 0);
+  const grouped = groupFindingsBySeverity(report.findings);
+  const severityEntries = Object.entries(grouped).filter(
+    ([, f]) => f.length > 0,
+  );
+  const riskConfig = getSeverityConfig(report.risk_level);
+  const RiskIcon = riskConfig.icon;
 
-  // 过滤后的条目
-  const filteredEntries = filterSeverity
-    ? severityEntries.filter(([s]) => s === filterSeverity)
-    : severityEntries;
+  const allFindings = report.findings;
+  const filteredFindings = filterSeverity
+    ? allFindings.filter((f) => f.severity === filterSeverity)
+    : allFindings;
+
+  const filteredGrouped = groupFindingsBySeverity(filteredFindings);
+  const filteredEntries = Object.entries(filteredGrouped).filter(
+    ([, f]) => f.length > 0,
+  );
 
   return (
-    <>
-      <Button onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>← 返回</Button>
+    <div className="space-y-4">
+      {/* Navigation */}
+      <Button variant="ghost" onClick={() => navigate(-1)}>
+        <ChevronLeft className="h-4 w-4 mr-1" />
+        返回
+      </Button>
 
+      {/* Progress log (if not polling) */}
       {report && logs.length > 0 && !polling && (
         <ReviewProgress logs={logs} logPolling={false} />
       )}
 
-      {/* 风险等级 + 总结 */}
-      <Descriptions bordered size="small" style={{ marginBottom: 16 }} column={2}>
-        <Descriptions.Item label="风险等级">
-          <Tag color={riskColors[report.risk_level]}>{report.risk_level.toUpperCase()}</Tag>
-        </Descriptions.Item>
-        <Descriptions.Item label="总结">{report.summary}</Descriptions.Item>
-      </Descriptions>
+      {/* Risk level header */}
+      <div className="flex items-center gap-3">
+        <Badge variant={riskVariantMap[report.risk_level]}>
+          <RiskIcon className="h-3.5 w-3.5" />
+          {report.risk_level.toUpperCase()}
+        </Badge>
+        <span className="text-sm">{report.summary}</span>
+      </div>
 
-      {/* 统计数据行 */}
-      <Descriptions bordered size="small" style={{ marginBottom: 24 }} column={5}>
-        <Descriptions.Item label="发现问题">{report.stats.total_findings}</Descriptions.Item>
-        <Descriptions.Item label="涉及文件">{report.stats.impacted_files}</Descriptions.Item>
-        <Descriptions.Item label="严重">{report.stats.by_severity.critical || 0}</Descriptions.Item>
-        <Descriptions.Item label="高危">{report.stats.by_severity.high || 0}</Descriptions.Item>
-        <Descriptions.Item label="中危">{report.stats.by_severity.medium || 0}</Descriptions.Item>
-      </Descriptions>
+      <Separator />
 
-      {/* 严重度过滤条 */}
-      <Space style={{ marginBottom: 16 }}>
-        <Tag
-          color={filterSeverity === null ? "blue" : "default"}
-          style={{ cursor: "pointer" }}
+      {/* Stats row */}
+      <div className="grid grid-cols-5 gap-3">
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold">
+            {report.stats.total_findings}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">总问题</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold">
+            {report.stats.impacted_files}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">涉及文件</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-[var(--severity-critical)]">
+            {report.stats.by_severity.critical || 0}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">严重</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-[var(--severity-high)]">
+            {report.stats.by_severity.high || 0}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">高危</div>
+        </div>
+        <div className="rounded-lg border bg-card p-4 text-center">
+          <div className="text-2xl font-bold text-[var(--severity-medium)]">
+            {report.stats.by_severity.medium || 0}
+          </div>
+          <div className="text-xs text-muted-foreground mt-1">中危</div>
+        </div>
+      </div>
+
+      {/* Severity filter pills */}
+      <div className="flex flex-wrap gap-2">
+        <button
           onClick={() => setFilterSeverity(null)}
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
+            filterSeverity === null
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-border text-muted-foreground hover:text-foreground"
+          }`}
         >
-          📋 全部 ({report.findings.length})
-        </Tag>
-        {severityEntries.map(([severity, findings]) => (
-          <Tag
-            key={severity}
-            color={filterSeverity === severity ? severityColors[severity] : "default"}
-            style={{ cursor: "pointer", opacity: filterSeverity && filterSeverity !== severity ? 0.4 : 1 }}
-            onClick={() => setFilterSeverity(filterSeverity === severity ? null : severity)}
-          >
-            {severityLabels[severity]} ({findings.length})
-          </Tag>
-        ))}
-      </Space>
+          全部 ({report.findings.length})
+        </button>
+        {severityEntries.map(([severity, findings]) => {
+          const cfg = getSeverityConfig(severity);
+          const Icon = cfg.icon;
+          const active = filterSeverity === severity;
+          const colorVar = `var(--severity-${severity})`;
+          return (
+            <button
+              key={severity}
+              onClick={() => setFilterSeverity(active ? null : severity)}
+              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer"
+              style={
+                active
+                  ? {
+                      borderColor: colorVar,
+                      backgroundColor: colorVar.replace(")", " / 0.1)"),
+                      color: colorVar,
+                    }
+                  : {}
+              }
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {cfg.label} ({findings.length})
+            </button>
+          );
+        })}
+      </div>
 
-      {/* Findings 列表 */}
-      {filteredEntries.map(([severity, findings]) => (
-        <Collapse
-          key={severity}
-          style={{ marginBottom: 16 }}
-          defaultActiveKey={[severity]}
-          items={[
-            {
-              key: severity,
-              label: (
-                <Tag color={severityColors[severity]}>
-                  {severityLabels[severity]} ({findings.length})
-                </Tag>
-              ),
-              children: findings.map((f, i) => (
-                <Card
-                  key={i}
-                  size="small"
-                  style={{ marginBottom: 8 }}
-                  title={
-                    <Space style={{ justifyContent: "space-between", width: "100%" }}>
-                      <span>{f.file}:{f.line} — {f.title}</span>
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<CopyOutlined />}
-                        onClick={() => copyFinding(f)}
-                      />
-                    </Space>
-                  }
-                >
-                  <Typography.Paragraph type="secondary">
-                    <strong>原因：</strong>
-                    {f.reason}
-                  </Typography.Paragraph>
-                  <Typography.Paragraph type="success">
-                    <strong>建议：</strong>
-                    {f.suggestion}
-                  </Typography.Paragraph>
-                </Card>
-              )),
-            },
-          ]}
-        />
-      ))}
-
-      {filteredEntries.length === 0 && (
-        <Card>该严重度下无发现问题</Card>
+      {/* Findings list */}
+      {filteredEntries.length === 0 ? (
+        <div className="rounded-lg border p-8 text-center text-muted-foreground">
+          该严重度下无发现问题
+        </div>
+      ) : (
+        filteredEntries.map(([severity, findings]) => (
+          <div key={severity} className="space-y-2">
+            {findings.map((f, i) => (
+              <FindingCard
+                key={`${f.file}-${f.line}-${i}`}
+                finding={f}
+                defaultOpen={severity === "critical" || severity === "high"}
+              />
+            ))}
+          </div>
+        ))
       )}
-    </>
+    </div>
   );
 }
