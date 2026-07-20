@@ -105,18 +105,41 @@ class BaseReviewer(ABC):
 
         期望 LLM 返回 JSON 数组，容错处理非 JSON 输出。
         """
+        text = llm_output.strip()
+
+        # 策略 1: ```json ... ``` 代码块
         try:
-            # 尝试提取 JSON 块
-            text = llm_output.strip()
             if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-            findings = json.loads(text)
-            if isinstance(findings, dict):
-                findings = findings.get("findings", [])
-            if isinstance(findings, list):
-                return findings
+                block = text.split("```json")[1].split("```")[0]
+                findings = json.loads(block)
+                if isinstance(findings, dict):
+                    findings = findings.get("findings", [])
+                if isinstance(findings, list):
+                    return findings
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+        # 策略 2: ``` ... ``` 代码块
+        try:
+            if "```" in text:
+                block = text.split("```")[1].split("```")[0]
+                findings = json.loads(block)
+                if isinstance(findings, dict):
+                    findings = findings.get("findings", [])
+                if isinstance(findings, list):
+                    return findings
+        except (json.JSONDecodeError, IndexError):
+            pass
+
+        # 策略 3: 全文本中提取 JSON 数组 [...]
+        try:
+            start = text.find("[")
+            end = text.rfind("]")
+            if start != -1 and end != -1 and end > start:
+                candidate = text[start:end + 1]
+                findings = json.loads(candidate)
+                if isinstance(findings, list):
+                    return findings
         except (json.JSONDecodeError, IndexError):
             pass
 
