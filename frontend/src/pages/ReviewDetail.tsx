@@ -227,33 +227,33 @@ export default function ReviewDetail() {
             <YAxis type="category" dataKey="name" hide />
             <Tooltip
               contentStyle={{
-                backgroundColor: "hsl(var(--card))",
-                border: "1px solid hsl(var(--border))",
+                backgroundColor: "var(--card)",
+                border: "1px solid var(--border)",
                 borderRadius: "6px",
                 fontSize: "13px",
               }}
-              labelStyle={{ color: "hsl(var(--foreground))" }}
+              labelStyle={{ color: "var(--foreground)" }}
             />
             <Bar
               dataKey="critical"
               stackId="a"
-              fill="hsl(var(--severity-critical))"
+              fill="var(--severity-critical)"
               radius={[0, 0, 0, 0]}
             />
             <Bar
               dataKey="high"
               stackId="a"
-              fill="hsl(var(--severity-high))"
+              fill="var(--severity-high)"
             />
             <Bar
               dataKey="medium"
               stackId="a"
-              fill="hsl(var(--severity-medium))"
+              fill="var(--severity-medium)"
             />
             <Bar
               dataKey="low"
               stackId="a"
-              fill="hsl(var(--severity-low))"
+              fill="var(--severity-low)"
               radius={[4, 4, 4, 4]}
             />
           </BarChart>

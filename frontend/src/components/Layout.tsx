@@ -2,7 +2,7 @@ import { Layout as AntLayout, Menu } from "antd";
 import { DashboardOutlined, GithubOutlined } from "@ant-design/icons";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 
-const { Sider } = AntLayout;
+const { Sider, Content } = AntLayout;
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -14,7 +14,7 @@ export default function Layout() {
   ];
 
   return (
-    <AntLayout style={{ minHeight: "100vh", background: "transparent" }}>
+    <AntLayout style={{ minHeight: "100vh" }}>
       <Sider collapsible>
         <div
           style={{
@@ -38,10 +38,12 @@ export default function Layout() {
           onClick={({ key }) => navigate(key)}
         />
       </Sider>
-      <AntLayout style={{ background: "transparent" }}>
-        <div className="p-6">
+      <AntLayout>
+        <Content
+          style={{ margin: 24, padding: 24, background: "var(--background)" }}
+        >
           <Outlet />
-        </div>
+        </Content>
       </AntLayout>
     </AntLayout>
   );
