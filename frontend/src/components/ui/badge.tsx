@@ -20,13 +20,13 @@ const badgeVariants = cva(
           "hover:bg-muted hover:text-muted-foreground dark:hover:bg-muted/50",
         link: "text-primary underline-offset-4 hover:underline",
         critical:
-          "bg-[var(--severity-critical)]/15 text-[var(--severity-critical)] [a]:hover:bg-[var(--severity-critical)]/25",
+          "bg-severity-critical/15 text-severity-critical [a]:hover:bg-severity-critical/25",
         high:
-          "bg-[var(--severity-high)]/15 text-[var(--severity-high)] [a]:hover:bg-[var(--severity-high)]/25",
+          "bg-severity-high/15 text-severity-high [a]:hover:bg-severity-high/25",
         medium:
-          "bg-[var(--severity-medium)]/15 text-[var(--severity-medium)] [a]:hover:bg-[var(--severity-medium)]/25",
+          "bg-severity-medium/15 text-severity-medium [a]:hover:bg-severity-medium/25",
         low:
-          "bg-[var(--severity-low)]/15 text-[var(--severity-low)] [a]:hover:bg-[var(--severity-low)]/25",
+          "bg-severity-low/15 text-severity-low [a]:hover:bg-severity-low/25",
       },
     },
     defaultVariants: {

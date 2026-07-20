@@ -1,12 +1,8 @@
 import { Layout as AntLayout, Menu } from "antd";
-import {
-  DashboardOutlined,
-  GithubOutlined,
-  PlusOutlined,
-} from "@ant-design/icons";
+import { DashboardOutlined, GithubOutlined } from "@ant-design/icons";
 import { Outlet, useNavigate, useLocation } from "react-router-dom";
 
-const { Header, Sider, Content } = AntLayout;
+const { Sider } = AntLayout;
 
 export default function Layout() {
   const navigate = useNavigate();
@@ -43,9 +39,9 @@ export default function Layout() {
         />
       </Sider>
       <AntLayout>
-        <Content style={{ margin: 24, padding: 24, background: "#fff" }}>
+        <div className="m-6 p-6 bg-background rounded-lg min-h-[calc(100vh-48px)]">
           <Outlet />
-        </Content>
+        </div>
       </AntLayout>
     </AntLayout>
   );

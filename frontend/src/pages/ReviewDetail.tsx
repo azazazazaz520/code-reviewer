@@ -295,21 +295,23 @@ export default function ReviewDetail() {
           const cfg = getSeverityConfig(severity);
           const Icon = cfg.icon;
           const active = filterSeverity === severity;
-          const colorVar = `var(--severity-${severity})`;
+          const activeClass =
+            severity === "critical"
+              ? "border-severity-critical bg-severity-critical/10 text-severity-critical"
+              : severity === "high"
+                ? "border-severity-high bg-severity-high/10 text-severity-high"
+                : severity === "medium"
+                  ? "border-severity-medium bg-severity-medium/10 text-severity-medium"
+                  : "border-severity-low bg-severity-low/10 text-severity-low";
           return (
             <button
               key={severity}
               onClick={() => setFilterSeverity(active ? null : severity)}
-              className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer"
-              style={
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
                 active
-                  ? {
-                      borderColor: colorVar,
-                      backgroundColor: colorVar.replace(")", " / 0.1)"),
-                      color: colorVar,
-                    }
-                  : {}
-              }
+                  ? activeClass
+                  : "border-border text-muted-foreground hover:text-foreground"
+              }`}
             >
               <Icon className="h-3.5 w-3.5" />
               {cfg.label} ({findings.length})
