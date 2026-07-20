@@ -47,6 +47,7 @@ class ReviewTaskResponse(BaseModel):
     commit_hash: str | None = None
     base_branch: str | None = None
     status: str
+    risk_level: str | None = None  # 从 review_reports JOIN 获取
     error_message: str | None = None
     reflection_rounds: int
     created_at: datetime
@@ -105,7 +106,6 @@ class ReportContent(BaseModel):
 class OverviewStats(BaseModel):
     total_reviews: int
     reviews_this_month: int
-    avg_risk_level: str
     active_repos: int
     risk_distribution: dict[str, int]
     recent_reviews: list[ReviewTaskResponse]
@@ -121,3 +121,40 @@ class RepoStats(BaseModel):
     risk_distribution: dict[str, int]
     hotspots: list[HotspotItem]
     recent_reviews: list[ReviewTaskResponse]
+
+
+# ─── 热力图 ──────────────────────────────────────────
+
+class HeatmapCell(BaseModel):
+    month: str  # "2026-01"
+    review_count: int
+    worst_risk: str | None = None  # null 表示该月无已完成审查
+
+
+class HeatmapRepoRow(BaseModel):
+    repo_id: str
+    repo_name: str
+    cells: list[HeatmapCell]
+
+
+class HeatmapResponse(BaseModel):
+    months: list[str]
+    repos: list[HeatmapRepoRow]
+
+
+# ─── PR / Commit 列表 ─────────────────────────────────
+
+class PRItem(BaseModel):
+    number: int
+    title: str
+    author: str
+    branch: str
+    created_at: str  # ISO 8601 字符串
+
+
+class CommitItem(BaseModel):
+    hash: str  # 完整 hash
+    short_hash: str  # 前 7 位
+    message: str
+    author: str
+    date: str  # ISO 8601 字符串
