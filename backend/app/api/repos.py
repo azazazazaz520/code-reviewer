@@ -113,7 +113,7 @@ def list_prs(repo_id: str, db: Session = Depends(get_db)):
             )
             for p in pulls
         ]
-    except requests.RequestException as e:
+    except (requests.RequestException, ValueError) as e:
         raise HTTPException(status_code=502, detail=f"GitHub API 请求失败: {str(e)}")
 
 
