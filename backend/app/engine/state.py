@@ -37,3 +37,6 @@ class ReviewState(TypedDict, total=False):
     # CRG 集成（可选）
     crg_enabled: bool
     impact_radius: dict | None
+
+    # 日志回调（审查进度实时推送）
+    _log_hook: object

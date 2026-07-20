@@ -115,10 +115,20 @@ class LLMProvider:
                                 args_str = args_str[:197] + "..."
                         except Exception:
                             args_str = str(tc["arguments"])[:200]
+
+                        # 简短摘要：取第一个有意义的参数值
+                        args_dict = tc.get("arguments") or {}
+                        summary = args_dict.get("file_path") or args_dict.get("path") or ""
+                        if not summary and isinstance(args_dict, dict):
+                            vals = [str(v) for v in args_dict.values() if not str(v).startswith("{")]
+                            summary = vals[0] if vals else ""
+                        if summary and len(summary) > 60:
+                            summary = "..." + summary[-57:]
+
                         _log_hook(
                             step="tool_call",
                             level="info",
-                            message=f"{tc['name']}: {args_str[:80]}",
+                            message=f"{tc['name']}: {summary}" if summary else tc["name"],
                             tool_name=tc["name"],
                             tool_args=args_str,
                         )
