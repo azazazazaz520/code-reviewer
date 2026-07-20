@@ -14,7 +14,7 @@ export default function Layout() {
   ];
 
   return (
-    <AntLayout style={{ minHeight: "100vh" }}>
+    <AntLayout style={{ minHeight: "100vh", background: "transparent" }}>
       <Sider collapsible>
         <div
           style={{
@@ -38,8 +38,8 @@ export default function Layout() {
           onClick={({ key }) => navigate(key)}
         />
       </Sider>
-      <AntLayout>
-        <div className="m-6 p-6 bg-background rounded-lg min-h-[calc(100vh-48px)]">
+      <AntLayout style={{ background: "transparent" }}>
+        <div className="p-6">
           <Outlet />
         </div>
       </AntLayout>
