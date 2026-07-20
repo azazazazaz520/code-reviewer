@@ -84,9 +84,11 @@ export default function ReviewProgress({ logs, logPolling }: Props) {
               {formatTime(log.created_at)}
             </Typography.Text>{" "}
             {log.step !== "tool_call" && (
-              <Typography.Text strong style={{ color: "#1677ff" }}>
-                [{stepLabels[log.step] || log.step}]
-              </Typography.Text>{" "}
+              <>
+                <Typography.Text strong style={{ color: "#1677ff" }}>
+                  [{stepLabels[log.step] || log.step}]
+                </Typography.Text>{" "}
+              </>
             )}
             {log.message}
           </div>
