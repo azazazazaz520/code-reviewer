@@ -116,19 +116,17 @@ def get_heatmap(db: Session = Depends(get_db)):
     # 获取所有 repos
     repos = db.query(Repo).order_by(Repo.name).all()
 
-    # 获取所有已完成的审查报告（JOIN task 获取 repo_id 和 completed_at）
+    # Get all completed reviews with their risk_level (one row per review, no GROUP BY)
     rows = (
         db.query(
             ReviewTask.repo_id,
             Repo.name,
             ReviewTask.completed_at,
             ReviewReport.risk_level,
-            func.count(ReviewReport.id).label("cnt"),
         )
         .join(Repo, ReviewTask.repo_id == Repo.id)
         .join(ReviewReport, ReviewReport.task_id == ReviewTask.id)
         .filter(ReviewTask.status == "done")
-        .group_by(ReviewTask.repo_id, func.strftime("%Y-%m", ReviewTask.completed_at))
         .order_by(ReviewTask.repo_id, func.strftime("%Y-%m", ReviewTask.completed_at))
         .all()
     )
@@ -141,22 +139,22 @@ def get_heatmap(db: Session = Depends(get_db)):
     data: dict[str, dict[str, tuple[int, str | None]]] = defaultdict(dict)
     all_months_set: set[str] = set()
 
-    for repo_id, repo_name, completed_at, risk_level, cnt in rows:
+    for repo_id, repo_name, completed_at, risk_level in rows:
         month = completed_at.strftime("%Y-%m")
         all_months_set.add(month)
         key = repo_id
         existing = data[key].get(month)
         if existing:
             prev_cnt, prev_worst = existing
-            new_cnt = prev_cnt + cnt
-            # 保留更严重的 risk_level
+            new_cnt = prev_cnt + 1
+            # Keep the more severe risk_level
             if prev_worst is None or severity_order.get(risk_level, 0) > severity_order.get(prev_worst, 0):
                 new_worst = risk_level
             else:
                 new_worst = prev_worst
             data[key][month] = (new_cnt, new_worst)
         else:
-            data[key][month] = (cnt, risk_level)
+            data[key][month] = (1, risk_level)
 
     # 生成月份列表（最近 12 个月，包含有数据的月份）
     from datetime import datetime, UTC
