@@ -54,41 +54,32 @@ export default function ReviewHeatmap({ data, onCellClick }: Props) {
                   : "var(--muted)";
                 return (
                   <td key={month} className="px-1 py-1">
-                    <div
+                    <button
+                      type="button"
                       onClick={() =>
                         cell.review_count > 0 &&
                         onCellClick(repo.repo_id, month)
+                      }
+                      disabled={cell.review_count === 0}
+                      aria-label={
+                        cell.review_count > 0
+                          ? `${repo.repo_name}，${cell.month}，审查 ${cell.review_count} 次，最高风险 ${cell.worst_risk ?? "无"}`
+                          : `${repo.repo_name}，${cell.month}，无审查`
                       }
                       title={
                         cell.review_count > 0
                           ? `${repo.repo_name} — ${cell.month}\n审查 ${cell.review_count} 次 · 最高风险: ${cell.worst_risk ?? "—"}`
                           : `${repo.repo_name} — ${cell.month}\n无审查`
                       }
+                      className="mx-auto flex h-9 w-9 items-center justify-center rounded text-[11px] font-semibold transition-transform enabled:hover:scale-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default"
                       style={{
-                        width: 36,
-                        height: 36,
                         backgroundColor: bg,
                         opacity: cell.review_count > 0 ? 1 : 0.4,
-                        cursor: cell.review_count > 0 ? "pointer" : "default",
-                        borderRadius: 4,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontSize: 11,
                         color: cell.worst_risk ? "#fff" : "var(--muted-foreground)",
-                        fontWeight: 600,
-                        margin: "0 auto",
-                        transition: "transform 0.15s",
-                      }}
-                      onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLElement).style.transform = "scale(1.15)";
-                      }}
-                      onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLElement).style.transform = "scale(1)";
                       }}
                     >
                       {cell.review_count > 0 ? cell.review_count : ""}
-                    </div>
+                    </button>
                   </td>
                 );
               })}

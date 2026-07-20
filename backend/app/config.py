@@ -23,6 +23,14 @@ class Settings(BaseSettings):
     # CRG
     crg_enabled: bool = True
 
+    # CORS — 开发环境默认覆盖常见 Vite 端口
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

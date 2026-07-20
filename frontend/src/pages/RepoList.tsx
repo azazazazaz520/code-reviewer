@@ -5,6 +5,14 @@ import type { Repo } from "../types";
 import { repoApi } from "../api/repos";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "../components/ui/table";
 import SubmitReviewModal from "../components/SubmitReviewModal";
 
 export default function RepoList() {
@@ -68,14 +76,14 @@ export default function RepoList() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold tracking-tight">仓库管理</h1>
-        <div className="flex gap-2">
-          <Button onClick={() => setReviewModalOpen(true)}>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button className="w-full sm:w-auto" onClick={() => setReviewModalOpen(true)}>
             <Plus className="h-4 w-4 mr-1" />
             发起审查
           </Button>
-          <Button variant="outline" onClick={openAdd}>
+          <Button className="w-full sm:w-auto" variant="outline" onClick={openAdd}>
             <Plus className="h-4 w-4 mr-1" />
             添加仓库
           </Button>
@@ -84,35 +92,35 @@ export default function RepoList() {
 
       <Card>
         <CardContent className="p-0">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="text-left font-medium text-muted-foreground px-6 py-3">名称</th>
-                <th className="text-left font-medium text-muted-foreground px-6 py-3">Git URL</th>
-                <th className="text-left font-medium text-muted-foreground px-6 py-3">本地路径</th>
-                <th className="text-left font-medium text-muted-foreground px-6 py-3">默认分支</th>
-                <th className="text-right font-medium text-muted-foreground px-6 py-3 w-48">操作</th>
-              </tr>
-            </thead>
-            <tbody>
+          <Table className="min-w-[820px]">
+            <TableHeader>
+              <TableRow>
+                <TableHead className="px-6 py-3 text-muted-foreground">名称</TableHead>
+                <TableHead className="px-6 py-3 text-muted-foreground">Git URL</TableHead>
+                <TableHead className="px-6 py-3 text-muted-foreground">本地路径</TableHead>
+                <TableHead className="px-6 py-3 text-muted-foreground">默认分支</TableHead>
+                <TableHead className="px-6 py-3 text-right text-muted-foreground w-48">操作</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
               {repos.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                <TableRow>
+                  <TableCell colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
                     暂无仓库，点击「添加仓库」开始
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               ) : (
                 repos.map((r) => (
-                  <tr key={r.id} className="border-b last:border-0 hover:bg-muted/50">
-                    <td className="px-6 py-3 font-medium">{r.name}</td>
-                    <td className="px-6 py-3 max-w-[200px] truncate text-muted-foreground" title={r.git_url}>
+                  <TableRow key={r.id}>
+                    <TableCell className="px-6 py-3 font-medium">{r.name}</TableCell>
+                    <TableCell className="px-6 py-3 max-w-[240px] truncate text-muted-foreground" title={r.git_url}>
                       {r.git_url}
-                    </td>
-                    <td className="px-6 py-3 max-w-[200px] truncate text-muted-foreground" title={r.local_path}>
+                    </TableCell>
+                    <TableCell className="px-6 py-3 max-w-[240px] truncate text-muted-foreground" title={r.local_path}>
                       {r.local_path}
-                    </td>
-                    <td className="px-6 py-3 text-muted-foreground">{r.default_branch}</td>
-                    <td className="px-6 py-3 text-right">
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-muted-foreground">{r.default_branch}</TableCell>
+                    <TableCell className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
                         <Button variant="link" size="sm" className="h-auto p-0" onClick={() => navigate(`/repos/${r.id}`)}>详情</Button>
                         <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openEdit(r)}>编辑</Button>
@@ -127,19 +135,19 @@ export default function RepoList() {
                           <Button variant="link" size="sm" className="h-auto p-0 text-destructive" onClick={() => setConfirmDelete(r.id)}>删除</Button>
                         )}
                       </div>
-                    </td>
-                  </tr>
+                    </TableCell>
+                  </TableRow>
                 ))
               )}
-            </tbody>
-          </table>
+            </TableBody>
+          </Table>
         </CardContent>
       </Card>
 
       {/* Add/Edit overlay */}
       {showForm && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowForm(false)}>
-          <div className="bg-card border rounded-lg shadow-lg w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="bg-card border rounded-lg shadow-lg w-[calc(100vw-2rem)] max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
             <h2 className="text-lg font-semibold">{editing ? "编辑仓库" : "添加仓库"}</h2>
             <div className="space-y-3">
               <div>

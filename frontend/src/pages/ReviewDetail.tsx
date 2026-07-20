@@ -27,6 +27,13 @@ const riskVariantMap: Record<string, "critical" | "high" | "medium" | "low"> =
     critical: "critical",
   };
 
+const riskBannerClass: Record<string, string> = {
+  critical: "border-severity-critical/40 bg-severity-critical/10",
+  high: "border-severity-high/40 bg-severity-high/10",
+  medium: "border-severity-medium/40 bg-severity-medium/10",
+  low: "border-severity-low/40 bg-severity-low/10",
+};
+
 function groupFindingsBySeverity(findings: Finding[]) {
   const groups: Record<string, Finding[]> = {
     critical: [],
@@ -149,7 +156,7 @@ export default function ReviewDetail() {
   );
 
   return (
-    <div className="max-w-5xl space-y-4">
+    <div className="space-y-4">
       {/* Navigation */}
       <Button variant="ghost" onClick={() => navigate(-1)}>
         <ChevronLeft className="h-4 w-4 mr-1" />
@@ -162,18 +169,18 @@ export default function ReviewDetail() {
       )}
 
       {/* Risk level header */}
-      <div className="flex items-center gap-3">
+      <div className={`rounded-lg border p-4 ${riskBannerClass[report.risk_level] ?? "bg-card"}`}>
         <Badge variant={riskVariantMap[report.risk_level]}>
           <RiskIcon className="h-3.5 w-3.5" />
           {report.risk_level.toUpperCase()}
         </Badge>
-        <span className="text-sm">{report.summary}</span>
+        <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
 
       <Separator />
 
       {/* Stats row */}
-      <div className="grid grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
         <div className="rounded-lg border bg-card p-4 text-center">
           <div className="text-2xl font-bold">
             {report.stats.total_findings}
@@ -282,8 +289,9 @@ export default function ReviewDetail() {
       {/* Severity filter pills */}
       <div className="flex flex-wrap gap-2">
         <button
+          type="button"
           onClick={() => setFilterSeverity(null)}
-          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
+          className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
             filterSeverity === null
               ? "border-primary bg-primary/10 text-primary"
               : "border-border text-muted-foreground hover:text-foreground"
@@ -306,12 +314,14 @@ export default function ReviewDetail() {
           return (
             <button
               key={severity}
+              type="button"
               onClick={() => setFilterSeverity(active ? null : severity)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer ${
+              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm font-medium transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                 active
                   ? activeClass
                   : "border-border text-muted-foreground hover:text-foreground"
               }`}
+              aria-pressed={active}
             >
               <Icon className="h-3.5 w-3.5" />
               {cfg.label} ({findings.length})

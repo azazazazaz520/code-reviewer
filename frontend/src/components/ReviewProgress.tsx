@@ -58,23 +58,21 @@ export default function ReviewProgress({
 
   return (
     <Card className="mb-6">
-      <CardHeader
-        className={`pb-2 ${!logPolling ? "cursor-pointer select-none" : ""}`}
-        onClick={() => !logPolling && setExpanded(!expanded)}
-      >
-        <CardTitle
-          className={`flex items-center gap-2 text-base ${statusColor}`}
-        >
-          {logPolling && !isComplete && (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          )}
-          {isComplete
-            ? "审查完成"
-            : isFailed
-              ? "审查失败"
-              : "审查进行中"}
-          {!logPolling && (
-            <>
+      <CardHeader className="pb-2">
+        <CardTitle className={`text-base ${statusColor}`}>
+          {logPolling ? (
+            <span className="flex items-center gap-2">
+              {!isComplete && <Loader2 className="h-4 w-4 animate-spin" />}
+              {isComplete ? "审查完成" : "审查进行中"}
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setExpanded(!expanded)}
+              aria-expanded={expanded}
+            >
+              {isComplete ? "审查完成" : isFailed ? "审查失败" : "审查进行中"}
               <span className="text-xs text-muted-foreground font-normal ml-2">
                 {stepCount} 个步骤 · {logs.length} 条日志
               </span>
@@ -83,7 +81,7 @@ export default function ReviewProgress({
                   expanded ? "rotate-180" : ""
                 }`}
               />
-            </>
+            </button>
           )}
         </CardTitle>
       </CardHeader>

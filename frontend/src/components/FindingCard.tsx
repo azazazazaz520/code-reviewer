@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { Copy, ChevronDown } from "lucide-react";
 import type { Finding } from "../types";
 import { Badge } from "./ui/badge";
@@ -21,17 +21,21 @@ export default function FindingCard({
   defaultOpen = false,
 }: FindingCardProps) {
   const [open, setOpen] = useState(defaultOpen);
+  const contentId = useId();
   const config = getSeverityConfig(finding.severity);
   const Icon = config.icon;
 
   return (
     <Card className={`border-l-[3px] ${config.borderColor} mb-2`}>
       <CardHeader className="p-3 pb-0">
-        <div
-          className="flex items-center justify-between cursor-pointer select-none"
+        <div className="flex items-center justify-between gap-2">
+          <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2 rounded-md text-left select-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => setOpen(!open)}
+          aria-expanded={open}
+          aria-controls={contentId}
         >
-          <div className="flex items-center gap-2 min-w-0">
             <Badge variant={config.badgeVariant}>
               <Icon className="h-3 w-3" />
               {config.label}
@@ -45,7 +49,7 @@ export default function FindingCard({
             <span className="text-sm font-medium text-foreground truncate hidden sm:inline">
               — {finding.title}
             </span>
-          </div>
+          </button>
 
           <div className="flex items-center gap-1 shrink-0 ml-2">
             <Button
@@ -57,14 +61,24 @@ export default function FindingCard({
                 copyFinding(finding);
               }}
               title="复制到剪贴板"
+              aria-label="复制发现项"
             >
               <Copy className="h-3.5 w-3.5" />
             </Button>
-            <ChevronDown
+            <button
+              type="button"
+              className="rounded-md p-1 text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={() => setOpen(!open)}
+              aria-expanded={open}
+              aria-controls={contentId}
+              aria-label={open ? "收起发现项" : "展开发现项"}
+            >
+              <ChevronDown
               className={`h-4 w-4 text-muted-foreground transition-transform duration-150 ${
                 open ? "rotate-180" : ""
               }`}
-            />
+              />
+            </button>
           </div>
         </div>
         {/* Show title below on mobile where it might be truncated above */}
@@ -72,7 +86,7 @@ export default function FindingCard({
       </CardHeader>
 
       {open && (
-        <CardContent className="p-3 pt-2 space-y-2">
+        <CardContent id={contentId} className="p-3 pt-2 space-y-2">
           <p className="text-sm text-muted-foreground">
             <strong className="text-foreground">原因：</strong>
             {finding.reason}
