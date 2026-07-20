@@ -4,6 +4,7 @@ import { PlusOutlined } from "@ant-design/icons";
 import { useNavigate } from "react-router-dom";
 import type { Repo } from "../types";
 import { repoApi } from "../api/repos";
+import SubmitReviewModal from "../components/SubmitReviewModal";
 
 export default function RepoList() {
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -11,6 +12,7 @@ export default function RepoList() {
   const [editing, setEditing] = useState<Repo | null>(null);
   const [form] = Form.useForm();
   const navigate = useNavigate();
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
 
   const load = () => repoApi.list().then((res) => setRepos(res.data));
 
@@ -53,17 +55,26 @@ export default function RepoList() {
     <>
       <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
         <h2>仓库管理</h2>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            setEditing(null);
-            form.resetFields();
-            setOpen(true);
-          }}
-        >
-          添加仓库
-        </Button>
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => setReviewModalOpen(true)}
+          >
+            发起审查
+          </Button>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={() => {
+              setEditing(null);
+              form.resetFields();
+              setOpen(true);
+            }}
+          >
+            添加仓库
+          </Button>
+        </Space>
       </div>
 
       <Table<Repo>
@@ -114,6 +125,8 @@ export default function RepoList() {
           </Form.Item>
         </Form>
       </Modal>
+
+      <SubmitReviewModal open={reviewModalOpen} onClose={() => setReviewModalOpen(false)} />
     </>
   );
 }

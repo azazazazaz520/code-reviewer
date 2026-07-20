@@ -16,6 +16,7 @@ import {
 import type { Repo, ReviewTask } from "../types";
 import { repoApi } from "../api/repos";
 import { reviewApi } from "../api/reviews";
+import SubmitReviewModal from "../components/SubmitReviewModal";
 
 export default function RepoDetail() {
   const { id } = useParams<{ id: string }>();
@@ -24,6 +25,7 @@ export default function RepoDetail() {
   const [tasks, setTasks] = useState<ReviewTask[]>([]);
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  const [reviewModalOpen, setReviewModalOpen] = useState(false);
 
   const load = async () => {
     if (!id) return;
@@ -66,7 +68,12 @@ export default function RepoDetail() {
       <Button onClick={() => navigate("/repos")} style={{ marginBottom: 16 }}>
         ← 返回
       </Button>
-      <h2>{repo.name}</h2>
+      <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 8 }}>
+        <h2 style={{ margin: 0 }}>{repo.name}</h2>
+        <Button type="primary" onClick={() => setReviewModalOpen(true)}>
+          发起审查
+        </Button>
+      </div>
       <p>
         {repo.git_url} · 本地: {repo.local_path}
         <Popconfirm title="确定删除此仓库？关联的审查记录也会被删除" onConfirm={handleDeleteRepo}>
@@ -126,6 +133,12 @@ export default function RepoDetail() {
           ]}
         />
       </Card>
+
+      <SubmitReviewModal
+        open={reviewModalOpen}
+        onClose={() => setReviewModalOpen(false)}
+        preSelectedRepoId={id}
+      />
     </>
   );
 }
