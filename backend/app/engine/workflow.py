@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 from langgraph.graph import StateGraph, END
 
@@ -36,6 +36,10 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
     commit_hash = state.get("commit_hash")
     git_url = state.get("git_url", "")
 
+    if hook := state.get("_log_hook"):
+        hook(step="load_pr", level="info",
+             message=f"正在获取代码变更... (type={review_type})")
+
     if review_type == "pr" and pr_number and git_url:
         # PR 模式：GitHub API
         diff_text = get_pr_diff(git_url, pr_number)
@@ -57,6 +61,11 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
         f.strip() for f in files_text.split("\n")
         if f.strip() and not f.strip().startswith("Error:")
     ]
+
+    if hook := state.get("_log_hook"):
+        hook(step="load_pr", level="info",
+             message=f"获取到 {len(state['changed_files'])} 个变更文件")
+
     return state
 
 
@@ -68,6 +77,9 @@ def _planning_node(state: ReviewState) -> ReviewState:
     plan = []
     changed = state.get("changed_files", [])
     diff = state.get("raw_diff", "")
+
+    if hook := state.get("_log_hook"):
+        hook(step="planning", level="info", message="正在规划审查策略...")
 
     # 文件类型规则
     if any(f.endswith(".py") or f.endswith(".js") or f.endswith(".ts") for f in changed):
@@ -89,6 +101,12 @@ def _planning_node(state: ReviewState) -> ReviewState:
                 plan.append("security_reviewer")
 
     state["review_plan"] = plan if plan else ["style_reviewer"]
+
+    if hook := state.get("_log_hook"):
+        plan_str = ", ".join(state["review_plan"]) if state["review_plan"] else "(default style)"
+        hook(step="planning", level="info",
+             message=f"审查策略: {plan_str}")
+
     return state
 
 
@@ -102,10 +120,20 @@ def _collect_context_node(state: ReviewState) -> ReviewState:
     changed_files = state.get("changed_files", [])
     cache: dict[str, str] = {}
 
+    if hook := state.get("_log_hook"):
+        hook(step="collect_context", level="info",
+             message=f"正在收集文件上下文 ({len(state.get('changed_files', []))} 个文件)...")
+
     # 尝试 CRG 爆炸半径分析
     if _try_crg_context(state, repo_path, changed_files, cache):
         state["crg_enabled"] = True
         state["file_context_cache"] = cache
+
+        source = "CRG" if state.get("crg_enabled") else "Normal"
+        if hook := state.get("_log_hook"):
+            hook(step="collect_context", level="info",
+                 message=f"已收集 {len(cache)} 个文件 ({source})")
+
         return state
 
     # 降级：逐文件读取
@@ -115,6 +143,12 @@ def _collect_context_node(state: ReviewState) -> ReviewState:
         content = read_file(str(full_path), start_line=1, max_lines=200)
         cache[file_path] = content
     state["file_context_cache"] = cache
+
+    source = "CRG" if state.get("crg_enabled") else "Normal"
+    if hook := state.get("_log_hook"):
+        hook(step="collect_context", level="info",
+             message=f"已收集 {len(cache)} 个文件 ({source})")
+
     return state
 
 
@@ -192,6 +226,9 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
         reviewer = REVIEWER_REGISTRY.get(reviewer_name)
         if reviewer:
             try:
+                if hook := state.get("_log_hook"):
+                    hook(step="run_reviews", level="info",
+                         message=f"正在执行 {reviewer_name}...")
                 findings = reviewer.review(context)
                 all_findings.extend(findings)
             except Exception as e:
@@ -215,6 +252,10 @@ def _reflection_node(state: ReviewState) -> ReviewState:
       - 硬限制: reflection_round >= max_reflection_rounds → 停止
       - 软判断: 至少一个 finding 引用了具体行号 → 认为覆盖充分
     """
+    if hook := state.get("_log_hook"):
+        hook(step="reflection", level="info",
+             message=f"反思中 (第 {state.get('reflection_round', 0) + 1}/{settings.max_reflection_rounds} 轮)...")
+
     state["reflection_round"] = state.get("reflection_round", 0) + 1
     max_rounds = settings.max_reflection_rounds
 
@@ -238,6 +279,9 @@ def _should_retry(state: ReviewState) -> Literal["collect", "report"]:
 
 def _generate_report_node(state: ReviewState) -> ReviewState:
     """Node 6: 生成最终 Report。"""
+    if hook := state.get("_log_hook"):
+        hook(step="generate_report", level="info", message="正在生成审查报告...")
+
     findings = state.get("findings", [])
 
     severity_count = {"critical": 0, "high": 0, "medium": 0, "low": 0}
@@ -326,6 +370,7 @@ def run_workflow(
     pr_number: int | None = None,
     commit_hash: str | None = None,
     base_branch: str | None = None,
+    log_hook: Callable | None = None,
 ) -> dict:
     """运行审查 Workflow，返回报告 dict。"""
     initial_state: ReviewState = {
@@ -346,6 +391,7 @@ def run_workflow(
         "risk_level": "low",
         "crg_enabled": True,
         "impact_radius": None,
+        "_log_hook": log_hook,
     }
 
     final_state = _graph.invoke(initial_state)
