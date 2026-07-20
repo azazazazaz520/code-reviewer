@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown } from "lucide-react";
 import type { ReviewLog } from "../types";
 
 const stepLabels: Record<string, string> = {
@@ -33,15 +33,20 @@ export default function ReviewProgress({
   const [expanded, setExpanded] = useState(false);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [logs.length]);
-
-  const displayLogs = expanded ? logs : logs.slice(-MAX_VISIBLE);
-  const hiddenCount = logs.length - MAX_VISIBLE;
+    if (logPolling) {
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [logs.length, logPolling]);
 
   const isComplete =
     logs.length > 0 && logs[logs.length - 1].message === "审查完成";
   const isFailed = !logPolling && !isComplete && logs.length > 0;
+
+  // When running, show logs; when complete/failed, collapsed by default
+  const showLogs = logPolling || expanded;
+
+  const displayLogs = expanded ? logs : logs.slice(-MAX_VISIBLE);
+  const hiddenCount = logs.length - MAX_VISIBLE;
 
   const statusColor = isComplete
     ? "text-severity-low"
@@ -49,71 +54,87 @@ export default function ReviewProgress({
       ? "text-destructive"
       : "text-primary";
 
+  const stepCount = logs.filter((l) => l.step !== "tool_call").length;
+
   return (
     <Card className="mb-6">
-      <CardHeader className="pb-2">
+      <CardHeader
+        className={`pb-2 ${!logPolling ? "cursor-pointer select-none" : ""}`}
+        onClick={() => !logPolling && setExpanded(!expanded)}
+      >
         <CardTitle
           className={`flex items-center gap-2 text-base ${statusColor}`}
         >
           {logPolling && !isComplete && (
             <Loader2 className="h-4 w-4 animate-spin" />
           )}
-          {isComplete ? "审查完成" : isFailed ? "审查失败" : "审查进行中"}
+          {isComplete
+            ? "审查完成"
+            : isFailed
+              ? "审查失败"
+              : "审查进行中"}
+          {!logPolling && (
+            <>
+              <span className="text-xs text-muted-foreground font-normal ml-2">
+                {stepCount} 个步骤 · {logs.length} 条日志
+              </span>
+              <ChevronDown
+                className={`h-4 w-4 ml-auto text-muted-foreground transition-transform duration-150 ${
+                  expanded ? "rotate-180" : ""
+                }`}
+              />
+            </>
+          )}
         </CardTitle>
       </CardHeader>
-      <CardContent>
-        <div className="max-h-[400px] overflow-auto font-mono text-[13px] leading-[1.8]">
-          {hiddenCount > 0 && !expanded && (
-            <div className="mb-2">
-              <Button
-                variant="link"
-                size="sm"
-                className="h-auto p-0 text-muted-foreground"
-                onClick={() => setExpanded(true)}
+
+      {showLogs && (
+        <CardContent>
+          <div className="max-h-[400px] overflow-auto font-mono text-[13px] leading-[1.8]">
+            {hiddenCount > 0 && !expanded && (
+              <div className="mb-2">
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0 text-muted-foreground"
+                  onClick={() => setExpanded(true)}
+                >
+                  展开全部 {logs.length} 条
+                </Button>
+              </div>
+            )}
+
+            {displayLogs.map((log) => (
+              <div
+                key={log.id}
+                className={log.step === "tool_call" ? "pl-6" : ""}
+                style={{
+                  color:
+                    log.level === "error"
+                      ? "hsl(var(--destructive))"
+                      : undefined,
+                }}
               >
-                展开全部 {logs.length} 条
-              </Button>
-            </div>
-          )}
+                <span className="text-[11px] text-muted-foreground">
+                  {formatTime(log.created_at)}
+                </span>{" "}
+                {log.step !== "tool_call" && (
+                  <span className="font-semibold text-primary">
+                    [{stepLabels[log.step] || log.step}]
+                  </span>
+                )}{" "}
+                {log.message}
+              </div>
+            ))}
 
-          {displayLogs.map((log) => (
-            <div
-              key={log.id}
-              className={log.step === "tool_call" ? "pl-6" : ""}
-              style={{
-                color:
-                  log.level === "error" ? "hsl(var(--destructive))" : undefined,
-              }}
-            >
-              <span className="text-[11px] text-muted-foreground">
-                {formatTime(log.created_at)}
-              </span>{" "}
-              {log.step !== "tool_call" && (
-                <span className="font-semibold text-primary">
-                  [{stepLabels[log.step] || log.step}]
-                </span>
-              )}{" "}
-              {log.message}
-            </div>
-          ))}
+            {logPolling && !isComplete && (
+              <div className="text-primary mt-1 animate-pulse">...</div>
+            )}
 
-          {logPolling && !isComplete && (
-            <div className="text-primary mt-1 animate-pulse">...</div>
-          )}
-
-          {isComplete && (
-            <div className="text-severity-low font-semibold mt-1">
-              审查完成
-            </div>
-          )}
-
-          {isFailed && (
-            <div className="text-destructive font-semibold mt-1">审查失败</div>
-          )}
-
-          <div ref={bottomRef} />
-        </div>
-      </CardContent>
+            <div ref={bottomRef} />
+          </div>
+        </CardContent>
+      )}
     </Card>
   );
 }

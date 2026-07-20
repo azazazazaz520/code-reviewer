@@ -149,7 +149,7 @@ export default function ReviewDetail() {
   );
 
   return (
-    <div className="space-y-4">
+    <div className="max-w-5xl space-y-4">
       {/* Navigation */}
       <Button variant="ghost" onClick={() => navigate(-1)}>
         <ChevronLeft className="h-4 w-4 mr-1" />
