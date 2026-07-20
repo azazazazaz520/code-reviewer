@@ -94,3 +94,14 @@ export interface CommitItem {
   author: string;
   date: string;
 }
+
+export interface ReviewLog {
+  id: string;
+  task_id: string;
+  step: string;
+  level: string;
+  message: string;
+  tool_name?: string | null;
+  tool_args?: string | null;
+  created_at: string;
+}
