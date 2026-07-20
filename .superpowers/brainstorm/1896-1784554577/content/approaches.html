@@ -1,0 +1,112 @@
+<h2>三种实现策略对比</h2>
+<p class="subtitle">当前项目重度依赖 Ant Design 6 — 选择哪条路改造双主题？</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="max-width: 460px; margin: 0 auto;">
+        <div class="mockup-header">方案 A：Ant Design ConfigProvider 主题系统</div>
+        <div class="mockup-body" style="display: flex; gap: 12px; padding: 16px;">
+          <!-- Dark mode preview -->
+          <div style="flex: 1; background: #0F172A; border-radius: 8px; padding: 12px; color: #F8FAFC; font-size: 12px; line-height: 1.6;">
+            <div style="font-weight: 700; margin-bottom: 8px; color: #22C55E;">🌙 暗色</div>
+            <div style="background: #1E293B; padding: 8px; border-radius: 4px; margin-bottom: 6px;">📊 Dashboard</div>
+            <div style="background: #1E293B; padding: 8px; border-radius: 4px; margin-bottom: 6px;">📁 仓库管理</div>
+            <div style="background: #1E293B; padding: 8px; border-radius: 4px; margin-bottom: 6px;">🔍 审查报告</div>
+            <div style="background: #22C55E; padding: 6px; border-radius: 4px; color: #000; text-align: center; font-weight: 600;">发起审查</div>
+          </div>
+          <!-- Light mode preview -->
+          <div style="flex: 1; background: #F8FAFC; border-radius: 8px; padding: 12px; color: #0F172A; font-size: 12px; line-height: 1.6; border: 1px solid #E2E8F0;">
+            <div style="font-weight: 700; margin-bottom: 8px; color: #16A34A;">☀️ 亮色</div>
+            <div style="background: #fff; padding: 8px; border-radius: 4px; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">📊 Dashboard</div>
+            <div style="background: #fff; padding: 8px; border-radius: 4px; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">📁 仓库管理</div>
+            <div style="background: #fff; padding: 8px; border-radius: 4px; margin-bottom: 6px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">🔍 审查报告</div>
+            <div style="background: #16A34A; padding: 6px; border-radius: 4px; color: #fff; text-align: center; font-weight: 600;">发起审查</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 A：ConfigProvider 主题</h3>
+      <p>利用 AntD 6 内置 <code>darkAlgorithm</code> / <code>defaultAlgorithm</code> + 自定义 token，组件自动适配</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="max-width: 460px; margin: 0 auto;">
+        <div class="mockup-header">方案 B：Tailwind CSS + 自定义设计令牌</div>
+        <div class="mockup-body" style="display: flex; gap: 12px; padding: 16px;">
+          <div style="flex: 1; background: #0A0A0F; border-radius: 12px; padding: 12px; color: #EDEDEF; font-size: 12px; line-height: 1.6; border: 1px solid rgba(255,255,255,0.08);">
+            <div style="font-weight: 700; margin-bottom: 8px; color: #5E6AD2; letter-spacing: 0.5px;">🌙 DARK</div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; margin-bottom: 6px; backdrop-filter: blur(8px);">📊 Dashboard</div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; margin-bottom: 6px; backdrop-filter: blur(8px);">📁 仓库管理</div>
+            <div style="background: rgba(255,255,255,0.05); padding: 8px; border-radius: 8px; margin-bottom: 6px; backdrop-filter: blur(8px);">🔍 审查报告</div>
+            <div style="background: linear-gradient(135deg, #5E6AD2, #7C3AED); padding: 8px; border-radius: 24px; color: #fff; text-align: center; font-weight: 600; box-shadow: 0 0 20px rgba(94,106,210,0.3);">发起审查 →</div>
+          </div>
+          <div style="flex: 1; background: #FAFAFA; border-radius: 12px; padding: 12px; color: #1A1A2E; font-size: 12px; line-height: 1.6; border: 1px solid #E5E5E5;">
+            <div style="font-weight: 700; margin-bottom: 8px; color: #4F46E5; letter-spacing: 0.5px;">☀️ LIGHT</div>
+            <div style="background: #fff; padding: 8px; border-radius: 8px; margin-bottom: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">📊 Dashboard</div>
+            <div style="background: #fff; padding: 8px; border-radius: 8px; margin-bottom: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">📁 仓库管理</div>
+            <div style="background: #fff; padding: 8px; border-radius: 8px; margin-bottom: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.06);">🔍 审查报告</div>
+            <div style="background: #4F46E5; padding: 8px; border-radius: 24px; color: #fff; text-align: center; font-weight: 600;">发起审查 →</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 B：Tailwind + 设计令牌</h3>
+      <p>品牌感独特，玻璃拟态/渐变/辉光效果自由。但需建令牌体系，与 AntD 共存有冲突风险</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="max-width: 460px; margin: 0 auto;">
+        <div class="mockup-header">方案 C：CSS Variables 手工主题</div>
+        <div class="mockup-body" style="display: flex; gap: 12px; padding: 16px;">
+          <div style="flex: 1; background: #0D1117; border-radius: 4px; padding: 12px; color: #C9D1D9; font-size: 12px; line-height: 1.6; font-family: monospace;">
+            <div style="margin-bottom: 8px; color: #58A6FF;">🌙 [data-theme="dark"]</div>
+            <div style="color: #8B949E; font-size: 11px; margin-bottom: 6px;">--bg: #0D1117<br>--surface: #161B22<br>--text: #C9D1D9<br>--accent: #238636</div>
+            <div style="background: #161B22; padding: 8px; border-radius: 4px; margin-bottom: 6px; border: 1px solid #30363D;">📊 Dashboard</div>
+            <div style="background: #161B22; padding: 8px; border-radius: 4px; margin-bottom: 6px; border: 1px solid #30363D;">📁 仓库管理</div>
+            <div style="background: #238636; padding: 6px; border-radius: 4px; text-align: center; font-weight: 600; color: #fff;">发起审查</div>
+          </div>
+          <div style="flex: 1; background: #FFFFFF; border-radius: 4px; padding: 12px; color: #24292F; font-size: 12px; line-height: 1.6; font-family: monospace; border: 1px solid #D0D7DE;">
+            <div style="margin-bottom: 8px; color: #0969DA;">☀️ [data-theme="light"]</div>
+            <div style="color: #656D76; font-size: 11px; margin-bottom: 6px;">--bg: #FFFFFF<br>--surface: #F6F8FA<br>--text: #24292F<br>--accent: #1F883D</div>
+            <div style="background: #F6F8FA; padding: 8px; border-radius: 4px; margin-bottom: 6px; border: 1px solid #D0D7DE;">📊 Dashboard</div>
+            <div style="background: #F6F8FA; padding: 8px; border-radius: 4px; margin-bottom: 6px; border: 1px solid #D0D7DE;">📁 仓库管理</div>
+            <div style="background: #1F883D; padding: 6px; border-radius: 4px; text-align: center; font-weight: 600; color: #fff;">发起审查</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>方案 C：CSS Variables 手工</h3>
+      <p>轻量零依赖，GitHub 风格。但 AntD 组件需逐个覆盖，维护成本随规模线性增长</p>
+    </div>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px;">
+  <h3>推荐：方案 A</h3>
+  <div class="pros-cons">
+    <div class="pros">
+      <h4>为什么选 A</h4>
+      <ul>
+        <li>AntD 6 的 <code>theme.token</code> 几乎覆盖所有视觉层（色板/圆角/阴影/字体）</li>
+        <li><code>darkAlgorithm</code> 自动处理组件级暗色适配，无需手工逐个覆盖</li>
+        <li>改动范围集中在 <code>App.tsx</code> 和 <code>index.css</code>，风险可控</li>
+        <li>把时间花在交互细节和内容质量上，而非和框架打架</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <h4>注意</h4>
+      <ul>
+        <li>自定义组件的暗色样式仍需额外处理</li>
+        <li>极端独特的视觉风格受限于 AntD 设计语言</li>
+      </ul>
+    </div>
+  </div>
+</div>

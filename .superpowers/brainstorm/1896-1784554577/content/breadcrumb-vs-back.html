@@ -1,0 +1,157 @@
+<style>
+  :root {
+    --background: 222.2 84% 4.9%; --foreground: 210 40% 98%;
+    --card: 217.2 32.6% 17.5%; --card-foreground: 210 40% 98%;
+    --primary: 142.1 76.2% 36.3%; --primary-foreground: 355.7 100% 97.3%;
+    --muted: 217.2 32.6% 12.5%; --muted-foreground: 215 20.2% 65.1%;
+    --border: 217.2 32.6% 25.5%; --destructive: 0 72.2% 50.6%;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: hsl(var(--background)); color: hsl(var(--foreground));
+    padding: 32px; line-height: 1.5;
+  }
+  h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: hsl(var(--muted-foreground)); margin-bottom: 20px; font-size: 14px; }
+
+  .options { display: flex; gap: 24px; flex-wrap: wrap; }
+  .opt {
+    flex: 1; min-width: 420px; border: 1px solid hsl(var(--border));
+    border-radius: 8px; overflow: hidden;
+  }
+  .opt-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 20px; border-bottom: 1px solid hsl(var(--border));
+    background: hsl(var(--card)); font-weight: 600; font-size: 14px;
+  }
+  .opt-header .letter {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px;
+    background: hsl(var(--primary)); color: hsl(var(--primary-foreground));
+    font-size: 13px; font-weight: 700;
+  }
+  .opt-body { padding: 20px; background: hsl(var(--background)); }
+
+  /* Breadcrumb styles */
+  .breadcrumb {
+    display: flex; align-items: center; gap: 8px; margin-bottom: 16px;
+    font-size: 13px;
+  }
+  .breadcrumb a { color: hsl(var(--muted-foreground)); text-decoration: none; }
+  .breadcrumb a:hover { color: hsl(var(--foreground)); text-decoration: underline; }
+  .breadcrumb .sep { color: hsl(var(--border)); font-size: 12px; }
+  .breadcrumb .current { color: hsl(var(--foreground)); font-weight: 500; }
+  .breadcrumb svg { width: 14px; height: 14px; }
+
+  /* Back button style */
+  .back-btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 6px 12px; border-radius: 6px; font-size: 13px; font-weight: 500;
+    background: transparent; color: hsl(var(--muted-foreground));
+    border: 1px solid hsl(var(--border)); cursor: pointer;
+    margin-bottom: 12px; transition: all 150ms;
+  }
+  .back-btn:hover { background: hsl(var(--muted)); color: hsl(var(--foreground)); }
+  .back-btn svg { width: 14px; height: 14px; }
+
+  /* Risk badge */
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 10px; border-radius: 9999px; font-size: 12px; font-weight: 500;
+  }
+  .badge-high { background: hsl(25 95% 50% / 0.15); color: hsl(25 95% 65%); }
+  .badge-high svg { width: 12px; height: 12px; }
+
+  .page-title-row {
+    display: flex; align-items: center; gap: 12px; margin-bottom: 4px;
+  }
+  .page-title-row h2 { font-size: 20px; }
+  .meta { color: hsl(var(--muted-foreground)); font-size: 13px; margin-bottom: 16px; }
+
+  .preview-context {
+    margin-bottom: 12px; padding: 10px 14px;
+    background: hsl(var(--muted)); border-radius: 6px;
+    font-size: 13px; color: hsl(var(--muted-foreground));
+    display: flex; align-items: center; gap: 8px;
+  }
+  .preview-context svg { width: 16px; height: 16px; flex-shrink: 0; }
+</style>
+
+<h2>ReviewDetail — 导航方式对比</h2>
+<p class="subtitle">场景：用户在仓库「frontend-app」中查看第 #42 号审查报告</p>
+
+<div class="options">
+  <!-- Option A: Breadcrumb -->
+  <div class="opt">
+    <div class="opt-header">
+      <span class="letter">A</span> 面包屑导航
+    </div>
+    <div class="opt-body">
+      <div class="preview-context">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        任一节点可点击跳转，完整路径始终可见
+      </div>
+
+      <nav class="breadcrumb">
+        <a href="#">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>
+          仪表盘
+        </a>
+        <span class="sep">/</span>
+        <a href="#">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.403 5.403 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>
+          仓库管理
+        </a>
+        <span class="sep">/</span>
+        <a href="#">frontend-app</a>
+        <span class="sep">/</span>
+        <span class="current">审查 #42</span>
+      </nav>
+
+      <div class="page-title-row">
+        <span class="badge badge-high">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+          HIGH
+        </span>
+        <h2>审查报告</h2>
+      </div>
+      <div class="meta">PR #42 · fix: resolve JWT secret handling · main → develop · 2025-07-15 14:32</div>
+
+      <div style="color: hsl(var(--muted-foreground)); font-size: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid hsl(var(--border));">
+        <strong>适用场景：</strong>页面层级 ≥3 层时，面包屑让用户随时知道「我在哪」，也能快速跳回上级
+      </div>
+    </div>
+  </div>
+
+  <!-- Option B: Back button -->
+  <div class="opt">
+    <div class="opt-header">
+      <span class="letter">B</span> 返回按钮 + 标题
+    </div>
+    <div class="opt-body">
+      <div class="preview-context">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+        返回按钮利用浏览器历史栈（router.go(-1)），简洁但不展示层级路径
+      </div>
+
+      <button class="back-btn">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        返回
+      </button>
+
+      <div class="page-title-row">
+        <span class="badge badge-high">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/></svg>
+          HIGH
+        </span>
+        <h2>审查报告</h2>
+      </div>
+      <div class="meta">PR #42 · fix: resolve JWT secret handling · main → develop · 2025-07-15 14:32</div>
+
+      <div style="color: hsl(var(--muted-foreground)); font-size: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid hsl(var(--border));">
+        <strong>适用场景：</strong>层级浅（≤2 层）的工具页面，返回按钮足够用，多一层面包屑反而显得多余
+      </div>
+    </div>
+  </div>
+</div>
