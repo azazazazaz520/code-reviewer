@@ -16,6 +16,7 @@ export interface ReviewTask {
   commit_hash: string | null;
   base_branch: string | null;
   status: "pending" | "running" | "done" | "failed";
+  risk_level?: string | null;
   error_message: string | null;
   reflection_rounds: number;
   created_at: string;
@@ -52,8 +53,44 @@ export interface ReviewReportResponse {
 export interface OverviewStats {
   total_reviews: number;
   reviews_this_month: number;
-  avg_risk_level: string;
   active_repos: number;
   risk_distribution: Record<string, number>;
   recent_reviews: ReviewTask[];
+}
+
+// ─── 热力图 ──────────────────────────────────────
+
+export interface HeatmapCell {
+  month: string;
+  review_count: number;
+  worst_risk: string | null;
+}
+
+export interface HeatmapRepoRow {
+  repo_id: string;
+  repo_name: string;
+  cells: HeatmapCell[];
+}
+
+export interface HeatmapData {
+  months: string[];
+  repos: HeatmapRepoRow[];
+}
+
+// ─── PR / Commit 列表 ─────────────────────────────
+
+export interface PRItem {
+  number: number;
+  title: string;
+  author: string;
+  branch: string;
+  created_at: string;
+}
+
+export interface CommitItem {
+  hash: string;
+  short_hash: string;
+  message: string;
+  author: string;
+  date: string;
 }
