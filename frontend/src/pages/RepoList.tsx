@@ -1,132 +1,175 @@
 import { useEffect, useState } from "react";
-import { Button, Form, Input, Modal, Popconfirm, Space, Table, message } from "antd";
-import { PlusOutlined } from "@ant-design/icons";
+import { Plus } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { Repo } from "../types";
 import { repoApi } from "../api/repos";
+import { Button } from "../components/ui/button";
+import { Card, CardContent } from "../components/ui/card";
 import SubmitReviewModal from "../components/SubmitReviewModal";
 
 export default function RepoList() {
   const [repos, setRepos] = useState<Repo[]>([]);
-  const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Repo | null>(null);
-  const [form] = Form.useForm();
-  const navigate = useNavigate();
+  const [showForm, setShowForm] = useState(false);
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+
+  /* form state */
+  const [name, setName] = useState("");
+  const [gitUrl, setGitUrl] = useState("");
+  const [localPath, setLocalPath] = useState("");
+  const [defaultBranch, setDefaultBranch] = useState("main");
+  const [saving, setSaving] = useState(false);
+
+  const navigate = useNavigate();
 
   const load = () => repoApi.list().then((res) => setRepos(res.data));
 
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
 
-  const handleSave = async () => {
-    try {
-      const values = await form.validateFields();
-      if (editing) {
-        await repoApi.update(editing.id, values);
-        message.success("仓库已更新");
-      } else {
-        await repoApi.create(values);
-        message.success("仓库已添加");
-      }
-      setOpen(false);
-      setEditing(null);
-      form.resetFields();
-      load();
-    } catch {
-      // validation
-    }
+  const openAdd = () => {
+    setEditing(null);
+    setName("");
+    setGitUrl("");
+    setLocalPath("");
+    setDefaultBranch("main");
+    setShowForm(true);
   };
 
-  const handleEdit = (repo: Repo) => {
+  const openEdit = (repo: Repo) => {
     setEditing(repo);
-    form.setFieldsValue(repo);
-    setOpen(true);
+    setName(repo.name);
+    setGitUrl(repo.git_url);
+    setLocalPath(repo.local_path);
+    setDefaultBranch(repo.default_branch);
+    setShowForm(true);
+  };
+
+  const handleSave = async () => {
+    if (!name || !gitUrl || !localPath) return;
+    setSaving(true);
+    try {
+      if (editing) {
+        await repoApi.update(editing.id, { name, git_url: gitUrl, local_path: localPath, default_branch: defaultBranch });
+      } else {
+        await repoApi.create({ name, git_url: gitUrl, local_path: localPath, default_branch: defaultBranch });
+      }
+      setShowForm(false);
+      load();
+    } catch { /* ignore */ }
+    finally { setSaving(false); }
   };
 
   const handleDelete = async (id: string) => {
     await repoApi.remove(id);
-    message.success("仓库已删除");
+    setConfirmDelete(null);
     load();
   };
 
   return (
-    <>
-      <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 16 }}>
-        <h2>仓库管理</h2>
-        <Space>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => setReviewModalOpen(true)}
-          >
+    <div className="space-y-6">
+      <div className="flex items-center justify-between">
+        <h1 className="text-2xl font-bold tracking-tight">仓库管理</h1>
+        <div className="flex gap-2">
+          <Button onClick={() => setReviewModalOpen(true)}>
+            <Plus className="h-4 w-4 mr-1" />
             发起审查
           </Button>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={() => {
-              setEditing(null);
-              form.resetFields();
-              setOpen(true);
-            }}
-          >
+          <Button variant="outline" onClick={openAdd}>
+            <Plus className="h-4 w-4 mr-1" />
             添加仓库
           </Button>
-        </Space>
+        </div>
       </div>
 
-      <Table<Repo>
-        dataSource={repos}
-        rowKey="id"
-        columns={[
-          { title: "名称", dataIndex: "name" },
-          { title: "Git URL", dataIndex: "git_url", ellipsis: true },
-          { title: "本地路径", dataIndex: "local_path", ellipsis: true },
-          { title: "默认分支", dataIndex: "default_branch", width: 100 },
-          {
-            title: "操作",
-            width: 200,
-            render: (_: unknown, r: Repo) => (
-              <Space>
-                <a onClick={() => navigate(`/repos/${r.id}`)}>详情</a>
-                <a onClick={() => handleEdit(r)}>编辑</a>
-                <Popconfirm title="确定删除此仓库？关联的审查记录也会被删除" onConfirm={() => handleDelete(r.id)}>
-                  <a style={{ color: "red" }}>删除</a>
-                </Popconfirm>
-              </Space>
-            ),
-          },
-        ]}
-      />
+      <Card>
+        <CardContent className="p-0">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="text-left font-medium text-muted-foreground px-6 py-3">名称</th>
+                <th className="text-left font-medium text-muted-foreground px-6 py-3">Git URL</th>
+                <th className="text-left font-medium text-muted-foreground px-6 py-3">本地路径</th>
+                <th className="text-left font-medium text-muted-foreground px-6 py-3">默认分支</th>
+                <th className="text-right font-medium text-muted-foreground px-6 py-3 w-48">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {repos.length === 0 ? (
+                <tr>
+                  <td colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                    暂无仓库，点击「添加仓库」开始
+                  </td>
+                </tr>
+              ) : (
+                repos.map((r) => (
+                  <tr key={r.id} className="border-b last:border-0 hover:bg-muted/50">
+                    <td className="px-6 py-3 font-medium">{r.name}</td>
+                    <td className="px-6 py-3 max-w-[200px] truncate text-muted-foreground" title={r.git_url}>
+                      {r.git_url}
+                    </td>
+                    <td className="px-6 py-3 max-w-[200px] truncate text-muted-foreground" title={r.local_path}>
+                      {r.local_path}
+                    </td>
+                    <td className="px-6 py-3 text-muted-foreground">{r.default_branch}</td>
+                    <td className="px-6 py-3 text-right">
+                      <div className="flex items-center justify-end gap-3">
+                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => navigate(`/repos/${r.id}`)}>详情</Button>
+                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openEdit(r)}>编辑</Button>
+                        {confirmDelete === r.id ? (
+                          <span className="text-sm">
+                            确定？{" "}
+                            <Button variant="link" size="sm" className="h-auto p-0 text-destructive" onClick={() => handleDelete(r.id)}>删除</Button>
+                            {" "}/{" "}
+                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setConfirmDelete(null)}>取消</Button>
+                          </span>
+                        ) : (
+                          <Button variant="link" size="sm" className="h-auto p-0 text-destructive" onClick={() => setConfirmDelete(r.id)}>删除</Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </CardContent>
+      </Card>
 
-      <Modal
-        title={editing ? "编辑仓库" : "添加仓库"}
-        open={open}
-        onOk={handleSave}
-        onCancel={() => {
-          setOpen(false);
-          setEditing(null);
-        }}
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="git_url" label="Git URL" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="local_path" label="本地路径" rules={[{ required: true }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="default_branch" label="默认分支" initialValue="main">
-            <Input />
-          </Form.Item>
-        </Form>
-      </Modal>
+      {/* Add/Edit overlay */}
+      {showForm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setShowForm(false)}>
+          <div className="bg-card border rounded-lg shadow-lg w-full max-w-md p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+            <h2 className="text-lg font-semibold">{editing ? "编辑仓库" : "添加仓库"}</h2>
+            <div className="space-y-3">
+              <div>
+                <label className="text-sm font-medium">名称</label>
+                <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={name} onChange={(e) => setName(e.target.value)} placeholder="仓库名称" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">Git URL</label>
+                <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/..." />
+              </div>
+              <div>
+                <label className="text-sm font-medium">本地路径</label>
+                <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="/path/to/repo" />
+              </div>
+              <div>
+                <label className="text-sm font-medium">默认分支</label>
+                <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 pt-2">
+              <Button variant="outline" onClick={() => setShowForm(false)}>取消</Button>
+              <Button onClick={handleSave} disabled={saving || !name || !gitUrl || !localPath}>
+                {saving ? "保存中..." : "保存"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <SubmitReviewModal open={reviewModalOpen} onClose={() => setReviewModalOpen(false)} />
-    </>
+    </div>
   );
 }

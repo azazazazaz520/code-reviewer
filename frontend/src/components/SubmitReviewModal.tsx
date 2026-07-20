@@ -1,22 +1,10 @@
 import { useEffect, useState } from "react";
-import {
-  Modal,
-  Select,
-  Radio,
-  List,
-  Button,
-  Input,
-  InputNumber,
-  Space,
-  Typography,
-  message,
-  Spin,
-  Alert,
-} from "antd";
 import { useNavigate } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import type { PRItem, CommitItem, Repo } from "../types";
 import { repoApi } from "../api/repos";
 import { reviewApi } from "../api/reviews";
+import { Button } from "./ui/button";
 
 interface Props {
   open: boolean;
@@ -24,93 +12,58 @@ interface Props {
   preSelectedRepoId?: string;
 }
 
+function timeAgo(iso: string) {
+  const diff = Date.now() - new Date(iso).getTime();
+  const hours = Math.floor(diff / 3600000);
+  if (hours < 1) return "刚刚";
+  if (hours < 24) return `${hours}h 前`;
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days}d 前`;
+  return new Date(iso).toLocaleDateString();
+}
+
 export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: Props) {
   const navigate = useNavigate();
   const [repos, setRepos] = useState<Repo[]>([]);
   const [repoId, setRepoId] = useState<string | null>(preSelectedRepoId ?? null);
   const [reviewType, setReviewType] = useState<"pr" | "local">("pr");
-  const [selectedPR, setSelectedPR] = useState<PRItem | null>(null);
-  const [selectedCommit, setSelectedCommit] = useState<CommitItem | null>(null);
   const [prs, setPRs] = useState<PRItem[]>([]);
   const [commits, setCommits] = useState<CommitItem[]>([]);
   const [loadingList, setLoadingList] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [listError, setListError] = useState<string | null>(null);
-  // 降级模式：列表加载失败时允许手动输入
-  const [manualPR, setManualPR] = useState<number | null>(null);
-  const [manualCommit, setManualCommit] = useState<string>("");
+  const [selectedPR, setSelectedPR] = useState<number | null>(null);
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const [manualPR, setManualPR] = useState("");
+  const [manualCommit, setManualCommit] = useState("");
 
-  // 加载仓库列表
   useEffect(() => {
-    if (open) {
-      repoApi.list().then((res) => setRepos(res.data)).catch(() => setRepos([]));
-    }
+    if (open) repoApi.list().then((res) => setRepos(res.data)).catch(() => {});
   }, [open]);
 
-  // 预设仓库
   useEffect(() => {
-    if (preSelectedRepoId) {
-      setRepoId(preSelectedRepoId);
-    }
+    if (preSelectedRepoId) setRepoId(preSelectedRepoId);
   }, [preSelectedRepoId]);
 
-  // 切换仓库或审查类型时加载列表
   useEffect(() => {
-    if (!repoId) {
-      setPRs([]);
-      setCommits([]);
-      setListError(null);
-      return;
-    }
-
+    if (!repoId) { setPRs([]); setCommits([]); setListError(null); return; }
     setLoadingList(true);
     setListError(null);
     setSelectedPR(null);
     setSelectedCommit(null);
-
-    if (reviewType === "pr") {
-      reviewApi
-        .listPRs(repoId)
-        .then((res) => {
-          setPRs(res.data);
-          setListError(null);
-        })
-        .catch((err) => {
-          setPRs([]);
-          const msg = err?.response?.data?.detail || "无法加载 PR 列表";
-          setListError(msg);
-        })
-        .finally(() => setLoadingList(false));
-    } else {
-      reviewApi
-        .listCommits(repoId)
-        .then((res) => {
-          setCommits(res.data);
-          setListError(null);
-        })
-        .catch((err) => {
-          setCommits([]);
-          const msg = err?.response?.data?.detail || "无法加载 Commit 列表";
-          setListError(msg);
-        })
-        .finally(() => setLoadingList(false));
-    }
+    const fetcher = reviewType === "pr"
+      ? reviewApi.listPRs(repoId).then((res) => setPRs(res.data))
+      : reviewApi.listCommits(repoId).then((res) => setCommits(res.data));
+    fetcher.catch((err: any) => {
+      setListError(err?.response?.data?.detail || "无法加载列表");
+    }).finally(() => setLoadingList(false));
   }, [repoId, reviewType]);
 
   const handleSubmit = async () => {
-    if (!repoId) {
-      message.warning("请选择仓库");
-      return;
-    }
-
-    const prNumber = selectedPR ? selectedPR.number : manualPR;
-    const commitHash = selectedCommit ? selectedCommit.hash : (manualCommit || undefined);
-
-    if (reviewType === "pr" && !prNumber) {
-      message.warning("请选择或输入 PR 编号");
-      return;
-    }
-
+    if (!repoId) return;
+    const prNumber = selectedPR || (manualPR ? parseInt(manualPR) : undefined);
+    const commitHash = selectedCommit || manualCommit || undefined;
+    if (reviewType === "pr" && !prNumber) return;
     setSubmitting(true);
     try {
       const res = await reviewApi.submit(repoId, {
@@ -118,176 +71,125 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
         pr_number: prNumber ?? undefined,
         commit_hash: commitHash || undefined,
       });
-      message.success("审查已提交");
+      reset();
       onClose();
-      resetForm();
       navigate(`/reviews/${res.data.id}`);
-    } catch {
-      message.error("提交审查失败");
-    } finally {
-      setSubmitting(false);
-    }
+    } catch { /* ignore */ }
+    finally { setSubmitting(false); }
   };
 
-  const resetForm = () => {
+  const reset = () => {
     setSelectedPR(null);
     setSelectedCommit(null);
-    setManualPR(null);
+    setManualPR("");
     setManualCommit("");
     setListError(null);
   };
 
-  const handleClose = () => {
-    resetForm();
-    onClose();
-  };
-
-  const formatTimeAgo = (isoStr: string) => {
-    const diff = Date.now() - new Date(isoStr).getTime();
-    const hours = Math.floor(diff / 3600000);
-    if (hours < 1) return "刚刚";
-    if (hours < 24) return `${hours}h 前`;
-    const days = Math.floor(hours / 24);
-    if (days < 30) return `${days}d 前`;
-    return new Date(isoStr).toLocaleDateString();
-  };
+  if (!open) return null;
 
   return (
-    <Modal
-      title="发起审查"
-      open={open}
-      onCancel={handleClose}
-      footer={[
-        <Button key="cancel" onClick={handleClose}>取消</Button>,
-        <Button key="submit" type="primary" loading={submitting} onClick={handleSubmit}>开始审查</Button>,
-      ]}
-      width={600}
-      destroyOnClose
-    >
-      {/* 仓库选择 */}
-      <div style={{ marginBottom: 16 }}>
-        <Typography.Text strong style={{ display: "block", marginBottom: 4 }}>仓库</Typography.Text>
-        <Select
-          showSearch
-          placeholder="选择仓库"
-          value={repoId}
-          onChange={(v) => setRepoId(v)}
-          filterOption={(input, option) =>
-            (option?.label as string)?.toLowerCase().includes(input.toLowerCase())
-          }
-          options={repos.map((r) => ({ label: r.name, value: r.id }))}
-          style={{ width: "100%" }}
-          status={!repoId ? "error" : undefined}
-        />
-      </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => { reset(); onClose(); }}>
+      <div className="bg-card border rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-auto p-6 space-y-4" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-lg font-semibold">发起审查</h2>
 
-      {/* 审查类型 */}
-      <div style={{ marginBottom: 16 }}>
-        <Typography.Text strong style={{ display: "block", marginBottom: 4 }}>审查类型</Typography.Text>
-        <Radio.Group
-          value={reviewType}
-          onChange={(e) => setReviewType(e.target.value)}
-        >
-          <Radio.Button value="pr">PR 审查</Radio.Button>
-          <Radio.Button value="local">Local Commit</Radio.Button>
-        </Radio.Group>
-      </div>
-
-      {/* 选择目标 */}
-      <div style={{ marginBottom: 8 }}>
-        <Typography.Text strong>
-          {reviewType === "pr" ? "选择 PR" : "选择 Commit"}
-        </Typography.Text>
-      </div>
-
-      {loadingList && (
-        <div style={{ textAlign: "center", padding: 24 }}>
-          <Spin tip="加载中..." />
+        {/* Repo select */}
+        <div>
+          <label className="text-sm font-medium block mb-1">仓库</label>
+          <select
+            className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm"
+            value={repoId || ""}
+            onChange={(e) => setRepoId(e.target.value || null)}
+          >
+            <option value="">选择仓库</option>
+            {repos.map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
         </div>
-      )}
 
-      {listError && (
-        <div style={{ marginBottom: 12 }}>
-          <Alert
-            type="warning"
-            message={listError}
-            showIcon
-            style={{ marginBottom: 8 }}
-          />
-          {reviewType === "pr" ? (
-            <Space>
-              <Typography.Text>手动输入 PR 编号：</Typography.Text>
-              <InputNumber
-                min={1}
-                value={manualPR}
-                onChange={(v) => setManualPR(v)}
-                placeholder="PR 编号"
-              />
-            </Space>
-          ) : (
-            <Space>
-              <Typography.Text>手动输入 Commit Hash：</Typography.Text>
-              <Input
-                value={manualCommit}
-                onChange={(e) => setManualCommit(e.target.value)}
-                placeholder="留空使用 HEAD"
-              />
-            </Space>
+        {/* Type toggle */}
+        <div>
+          <label className="text-sm font-medium block mb-1">审查类型</label>
+          <div className="flex rounded-md border h-9 w-fit">
+            <button className={`px-4 text-sm ${reviewType === "pr" ? "bg-primary text-primary-foreground" : ""}`} onClick={() => setReviewType("pr")}>PR 审查</button>
+            <button className={`px-4 text-sm rounded-r-md ${reviewType === "local" ? "bg-primary text-primary-foreground" : ""}`} onClick={() => setReviewType("local")}>Local Commit</button>
+          </div>
+        </div>
+
+        {/* Target list */}
+        <div>
+          <label className="text-sm font-medium block mb-1">
+            {reviewType === "pr" ? "选择 PR" : "选择 Commit"}
+          </label>
+
+          {loadingList && (
+            <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm">
+              <Loader2 className="h-4 w-4 animate-spin" />加载中...
+            </div>
+          )}
+
+          {listError && (
+            <div className="space-y-2 mb-2">
+              <div className="text-sm text-yellow-600 bg-yellow-50 border border-yellow-200 rounded-md p-3 dark:bg-yellow-950 dark:border-yellow-800 dark:text-yellow-400">
+                {listError}
+              </div>
+              {reviewType === "pr" ? (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">手动输入 PR 编号：</span>
+                  <input type="number" min={1} className="flex h-9 w-32 rounded-md border bg-background px-3 py-1 text-sm" value={manualPR} onChange={(e) => setManualPR(e.target.value)} />
+                </div>
+              ) : (
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">手动输入 Commit Hash：</span>
+                  <input className="flex h-9 w-44 rounded-md border bg-background px-3 py-1 text-sm font-mono" value={manualCommit} onChange={(e) => setManualCommit(e.target.value)} placeholder="留空使用 HEAD" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {!loadingList && !listError && (
+            <div className="border rounded-md max-h-60 overflow-auto">
+              {reviewType === "pr" ? (
+                prs.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">该仓库暂无 Open PR</div>
+                ) : (
+                  prs.map((pr) => (
+                    <div
+                      key={pr.number}
+                      className={`px-3 py-2 cursor-pointer border-b last:border-0 hover:bg-muted text-sm ${selectedPR === pr.number ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
+                      onClick={() => setSelectedPR(selectedPR === pr.number ? null : pr.number)}
+                    >
+                      <div className="font-medium">#{pr.number} — {pr.title}</div>
+                      <div className="text-xs text-muted-foreground">{pr.author} · {timeAgo(pr.created_at)}</div>
+                    </div>
+                  ))
+                )
+              ) : (
+                commits.length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">该仓库无 Commit 记录</div>
+                ) : (
+                  commits.map((c) => (
+                    <div
+                      key={c.hash}
+                      className={`px-3 py-2 cursor-pointer border-b last:border-0 hover:bg-muted text-sm ${selectedCommit === c.hash ? "bg-primary/10 border-l-2 border-l-primary" : ""}`}
+                      onClick={() => setSelectedCommit(selectedCommit === c.hash ? null : c.hash)}
+                    >
+                      <div className="font-medium font-mono">{c.short_hash}</div>
+                      <div className="text-xs text-muted-foreground">{c.message} · {c.author} · {timeAgo(c.date)}</div>
+                    </div>
+                  ))
+                )
+              )}
+            </div>
           )}
         </div>
-      )}
 
-      {!loadingList && !listError && reviewType === "pr" && (
-        <List
-          dataSource={prs}
-          locale={{ emptyText: "该仓库暂无 Open PR" }}
-          renderItem={(pr) => (
-            <List.Item
-              key={pr.number}
-              onClick={() => setSelectedPR(pr)}
-              style={{
-                cursor: "pointer",
-                padding: "8px 12px",
-                borderRadius: 4,
-                backgroundColor: selectedPR?.number === pr.number ? "#e6f4ff" : undefined,
-                border: selectedPR?.number === pr.number ? "1px solid #1677ff" : "1px solid transparent",
-              }}
-            >
-              <List.Item.Meta
-                title={<span>#{pr.number} — {pr.title}</span>}
-                description={`${pr.author} · ${formatTimeAgo(pr.created_at)}`}
-              />
-            </List.Item>
-          )}
-          style={{ maxHeight: 240, overflow: "auto", border: "1px solid #f0f0f0", borderRadius: 8 }}
-        />
-      )}
-
-      {!loadingList && !listError && reviewType === "local" && (
-        <List
-          dataSource={commits}
-          locale={{ emptyText: "该仓库无 Commit 记录" }}
-          renderItem={(commit) => (
-            <List.Item
-              key={commit.hash}
-              onClick={() => setSelectedCommit(commit)}
-              style={{
-                cursor: "pointer",
-                padding: "8px 12px",
-                borderRadius: 4,
-                backgroundColor: selectedCommit?.hash === commit.hash ? "#e6f4ff" : undefined,
-                border: selectedCommit?.hash === commit.hash ? "1px solid #1677ff" : "1px solid transparent",
-              }}
-            >
-              <List.Item.Meta
-                title={<span style={{ fontFamily: "monospace" }}>{commit.short_hash}</span>}
-                description={`${commit.message} · ${commit.author} · ${formatTimeAgo(commit.date)}`}
-              />
-            </List.Item>
-          )}
-          style={{ maxHeight: 240, overflow: "auto", border: "1px solid #f0f0f0", borderRadius: 8 }}
-        />
-      )}
-    </Modal>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button variant="outline" onClick={() => { reset(); onClose(); }}>取消</Button>
+          <Button onClick={handleSubmit} disabled={submitting || !repoId}>
+            {submitting ? "提交中..." : "开始审查"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
