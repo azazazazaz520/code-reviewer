@@ -77,3 +77,22 @@ class ReviewReport(Base):
     )
 
     task: Mapped["ReviewTask"] = relationship(back_populates="report")
+
+
+class ReviewLog(Base):
+    __tablename__ = "review_logs"
+
+    id: Mapped[str] = mapped_column(
+        String(36), primary_key=True, default=lambda: str(uuid.uuid4())
+    )
+    task_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("review_tasks.id", ondelete="CASCADE"), nullable=False
+    )
+    step: Mapped[str] = mapped_column(String(30), nullable=False)
+    level: Mapped[str] = mapped_column(String(10), default="info")
+    message: Mapped[str] = mapped_column(Text, nullable=False)
+    tool_name: Mapped[str | None] = mapped_column(String(30), nullable=True)
+    tool_args: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now()
+    )

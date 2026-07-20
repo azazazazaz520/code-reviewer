@@ -158,3 +158,18 @@ class CommitItem(BaseModel):
     message: str
     author: str
     date: str  # ISO 8601 字符串
+
+
+# ─── 审查日志 ──────────────────────────────────────────
+
+class ReviewLogResponse(BaseModel):
+    id: str
+    task_id: str
+    step: str
+    level: str
+    message: str
+    tool_name: str | None = None
+    tool_args: str | None = None
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
