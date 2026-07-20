@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, Col, Row, Statistic, Table, Tag, Button } from "antd";
+import { Card, Col, Row, Statistic, Table, Tag, Button, message } from "antd";
 import { PlusOutlined } from "@ant-design/icons";
 import type { OverviewStats, ReviewTask, HeatmapData } from "../types";
 import { statsApi } from "../api/stats";
@@ -22,7 +22,9 @@ export default function Dashboard() {
 
   useEffect(() => {
     statsApi.overview().then((res) => setStats(res.data));
-    statsApi.heatmap().then((res) => setHeatmap(res.data)).catch(() => {});
+    statsApi.heatmap().then((res) => setHeatmap(res.data)).catch(() => {
+      message.warning("热力图数据加载失败");
+    });
   }, []);
 
   if (!stats) return <Card loading />;

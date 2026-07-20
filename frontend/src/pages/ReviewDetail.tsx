@@ -95,14 +95,7 @@ export default function ReviewDetail() {
     );
   }
 
-  if (!report) {
-    return (
-      <>
-        <Button onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>← 返回</Button>
-        <Card loading title="审查进行中..." />
-      </>
-    );
-  }
+  if (!report) return null;
 
   const grouped = findingsBySeverity(report.findings);
   const severityEntries = Object.entries(grouped).filter(([, f]) => f.length > 0);

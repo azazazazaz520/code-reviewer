@@ -47,8 +47,13 @@ export default function RepoDetail() {
       message.success("审查已提交");
       form.resetFields();
       load();
-    } catch {
-      // validation
+    } catch (err: unknown) {
+      // Form validation errors are handled by the form itself
+      if (err && typeof err === 'object' && 'errorFields' in (err as Record<string, unknown>)) {
+        // Ant Design form validation error — form handles display
+        return;
+      }
+      message.error("提交审查失败，请稍后重试");
     } finally {
       setLoading(false);
     }
