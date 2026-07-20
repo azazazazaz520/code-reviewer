@@ -5,19 +5,19 @@
 
 @custom-variant dark (&:is(.dark *));
 
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-}
-
-#root {
-  width: 100%;
-  min-height: 100vh;
+@layer base {
+  * {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+  }
+  #root {
+    width: 100%;
+    min-height: 100vh;
+  }
 }
 
 @theme inline {
