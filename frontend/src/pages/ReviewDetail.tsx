@@ -2,8 +2,9 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { Button, Card, Collapse, Descriptions, Space, Tag, Typography, message } from "antd";
 import { CopyOutlined } from "@ant-design/icons";
-import type { Finding, ReviewReport, ReviewTask } from "../types";
+import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
 import { reviewApi } from "../api/reviews";
+import ReviewProgress from "../components/ReviewProgress";
 
 const severityColors: Record<string, string> = {
   critical: "red",
@@ -40,23 +41,36 @@ export default function ReviewDetail() {
   const [report, setReport] = useState<ReviewReport | null>(null);
   const [polling, setPolling] = useState(true);
   const [filterSeverity, setFilterSeverity] = useState<string | null>(null);
+  const [logs, setLogs] = useState<ReviewLog[]>([]);
+  const [logPolling, setLogPolling] = useState(true);
 
   useEffect(() => {
     if (!id) return;
-    const interval = setInterval(async () => {
-      const res = await reviewApi.report(id);
-      if (res.data.status === "done" || res.data.status === "failed") {
-        setPolling(false);
-        clearInterval(interval);
-      }
-      if (res.data.report) setReport(res.data.report);
-    }, 2000);
 
-    reviewApi.status(id).then((r) => setTask(r.data));
-    reviewApi.report(id).then((r) => {
-      if (r.data.report) setReport(r.data.report);
-      if (r.data.status !== "pending" && r.data.status !== "running") setPolling(false);
-    });
+    const fetchAll = () => {
+      reviewApi.status(id).then((r) => setTask(r.data));
+
+      reviewApi.report(id).then((r) => {
+        if (r.data.report) setReport(r.data.report);
+        if (r.data.status !== "pending" && r.data.status !== "running") {
+          setPolling(false);
+        }
+      });
+
+      reviewApi.logs(id).then((r) => {
+        setLogs(r.data);
+        // 如果已有最终日志且不再 loading，停止日志轮询
+        const hasComplete = r.data.some(
+          (l: ReviewLog) => l.message === "审查完成" || l.level === "error" && l.step === "generate_report"
+        );
+        if (hasComplete) {
+          setLogPolling(false);
+        }
+      });
+    };
+
+    fetchAll();
+    const interval = setInterval(fetchAll, 2000);
 
     return () => clearInterval(interval);
   }, [id]);
@@ -67,7 +81,9 @@ export default function ReviewDetail() {
     return groups;
   };
 
-  if (!report && polling) return <Card loading title="审查进行中..." />;
+  if (!report && polling) return (
+    <ReviewProgress logs={logs} logPolling={logPolling} />
+  );
 
   if (!report && !polling && task?.status === "failed") {
     return (
@@ -108,6 +124,10 @@ export default function ReviewDetail() {
   return (
     <>
       <Button onClick={() => navigate(-1)} style={{ marginBottom: 16 }}>← 返回</Button>
+
+      {report && logs.length > 0 && !polling && (
+        <ReviewProgress logs={logs} logPolling={false} />
+      )}
 
       {/* 风险等级 + 总结 */}
       <Descriptions bordered size="small" style={{ marginBottom: 16 }} column={2}>
