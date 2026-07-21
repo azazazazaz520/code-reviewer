@@ -1,6 +1,9 @@
 import re
+import shutil
 import subprocess
+import uuid as uuid_mod
 import os
+from pathlib import Path
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -21,10 +24,40 @@ def list_repos(db: Session = Depends(get_db)):
 
 @router.post("", response_model=RepoResponse, status_code=201)
 def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
+    # 确定 clone 目标目录
+    repo_uuid = str(uuid_mod.uuid4())
+    clone_dir = Path(settings.repos_dir) / repo_uuid
+    clone_dir.mkdir(parents=True, exist_ok=True)
+
+    # 构造 clone URL（私有仓库注入 GitHub token）
+    clone_url = body.git_url
+    if settings.github_token and "github.com" in clone_url:
+        # 将 https://github.com/... 变成 https://<token>@github.com/...
+        clone_url = clone_url.replace(
+            "https://github.com/", f"https://{settings.github_token}@github.com/"
+        )
+
+    # 执行 clone
+    result = subprocess.run(
+        ["git", "clone", "--depth", "1", "--single-branch",
+         "--branch", body.default_branch, clone_url, str(clone_dir)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=120,
+    )
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        # 清理失败的空目录
+        if clone_dir.exists():
+            shutil.rmtree(clone_dir)
+        raise HTTPException(status_code=400, detail=f"Git clone 失败: {stderr}")
+
     repo = Repo(
+        id=repo_uuid,
         name=body.name,
         git_url=body.git_url,
-        local_path=body.local_path,
+        local_path=str(clone_dir.resolve()),
         default_branch=body.default_branch,
     )
     db.add(repo)
