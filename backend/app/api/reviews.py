@@ -1,4 +1,5 @@
 import json
+import subprocess
 from datetime import datetime, UTC
 
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
@@ -141,6 +142,24 @@ def _run_review_workflow(task_id: str):
                 pass  # 日志写入失败不影响审查流程
 
         set_log_hook(log_hook)
+
+        # 审查前拉取最新代码
+        try:
+            fetch_result = subprocess.run(
+                ["git", "-C", repo.local_path, "fetch", "--depth", "1", "origin",
+                 repo.default_branch],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+            )
+            if fetch_result.returncode != 0:
+                log_hook(step="load_pr", level="warn",
+                         message=f"git fetch 警告: {(fetch_result.stderr or '').strip()[:200]}")
+        except subprocess.TimeoutExpired:
+            log_hook(step="load_pr", level="warn", message="git fetch 超时，继续使用本地已有数据")
+        except Exception as e:
+            log_hook(step="load_pr", level="warn", message=f"git fetch 异常: {str(e)[:200]}")
 
         # 写入开始日志
         log_hook(step="load_pr", level="info",
