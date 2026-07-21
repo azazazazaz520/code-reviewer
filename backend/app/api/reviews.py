@@ -146,7 +146,7 @@ def _run_review_workflow(task_id: str):
         # 审查前拉取最新代码
         try:
             fetch_result = subprocess.run(
-                ["git", "-C", repo.local_path, "fetch", "--depth", "1", "origin",
+                ["git", "-C", repo.local_path, "fetch", "origin",
                  repo.default_branch],
                 capture_output=True,
                 text=True,

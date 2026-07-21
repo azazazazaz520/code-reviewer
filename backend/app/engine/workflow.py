@@ -166,7 +166,7 @@ def _try_crg_context(
     crg_dir = Path(repo_path) / ".code-review-graph"
     if not crg_dir.exists():
         try:
-            crg_build(["build"], standalone_mode=False)
+            crg_build(["build", "--repo", repo_path], standalone_mode=False)
         except Exception:
             return False
 

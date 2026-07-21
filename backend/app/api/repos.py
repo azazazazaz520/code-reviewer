@@ -39,7 +39,7 @@ def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
 
     # 执行 clone
     result = subprocess.run(
-        ["git", "clone", "--depth", "1", "--single-branch",
+        ["git", "clone", "--single-branch",
          "--branch", body.default_branch, clone_url, str(clone_dir)],
         capture_output=True,
         text=True,
