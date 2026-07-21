@@ -17,7 +17,25 @@ ROOT = Path(__file__).resolve().parent
 _processes: list[subprocess.Popen] = []
 
 
+def _shutdown(sig, frame):
+    """Terminate all managed processes gracefully."""
+    print("\nShutting down...")
+    for p in _processes:
+        p.terminate()
+    for p in _processes:
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    sys.exit(0)
+
+
 def main():
+    _start_processes()
+    _wait()
+
+
+def _start_processes():
     prod = "--prod" in sys.argv
 
     print("=" * 50)
@@ -33,22 +51,21 @@ def main():
     if not prod:
         backend_args.append("--reload")
 
-    backend_proc = subprocess.Popen(
-        backend_args,
-        cwd=str(ROOT / "backend"),
-    )
+    backend_proc = subprocess.Popen(backend_args, cwd=str(ROOT / "backend"))
     _processes.append(backend_proc)
 
     if not prod:
-        # Start frontend dev server
         print("[frontend] Starting Vite dev server...")
         npm_cmd = "npm.cmd" if sys.platform == "win32" else "npm"
         frontend_proc = subprocess.Popen(
-            [npm_cmd, "run", "dev"],
-            cwd=str(ROOT / "frontend"),
+            [npm_cmd, "run", "dev"], cwd=str(ROOT / "frontend")
         )
         _processes.append(frontend_proc)
 
+    _print_running_info(prod)
+
+
+def _print_running_info(prod: bool):
     print("\n" + "-" * 50)
     if prod:
         print("App running at: http://localhost:8000")
@@ -58,26 +75,15 @@ def main():
     print("Press Ctrl+C to stop")
     print("-" * 50 + "\n")
 
-    # Wait for any process to exit, or handle Ctrl+C
-    def shutdown(sig, frame):
-        print("\nShutting down...")
-        for p in _processes:
-            p.terminate()
-        for p in _processes:
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
-        sys.exit(0)
 
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
+def _wait():
+    signal.signal(signal.SIGINT, _shutdown)
+    signal.signal(signal.SIGTERM, _shutdown)
     try:
         for p in _processes:
             p.wait()
     except KeyboardInterrupt:
-        shutdown(None, None)
+        _shutdown(None, None)
 
 
 if __name__ == "__main__":
