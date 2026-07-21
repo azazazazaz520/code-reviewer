@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { ChevronLeft, TriangleAlert } from "lucide-react";
 import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
@@ -56,33 +56,39 @@ export default function ReviewDetail() {
   const [logPolling, setLogPolling] = useState(true);
   const [loading, setLoading] = useState(true);
 
+  const fetchAll = useCallback(() => {
+    if (!id) return;
+    reviewApi.status(id).then((r) => setTask(r.data));
+    reviewApi.report(id).then((r) => {
+      if (r.data.report) setReport(r.data.report);
+      if (r.data.status !== "pending" && r.data.status !== "running") {
+        setPolling(false);
+      }
+    });
+    reviewApi.logs(id).then((r) => {
+      setLogs(r.data);
+      const hasComplete = r.data.some(
+        (l: ReviewLog) =>
+          l.message === "审查完成" ||
+          (l.level === "error" && l.step === "generate_report"),
+      );
+      if (hasComplete) setLogPolling(false);
+    });
+  }, [id]);
+
+  // Initial fetch
   useEffect(() => {
     if (!id) return;
-
-    const fetchAll = () => {
-      reviewApi.status(id).then((r) => setTask(r.data));
-      reviewApi.report(id).then((r) => {
-        if (r.data.report) setReport(r.data.report);
-        if (r.data.status !== "pending" && r.data.status !== "running") {
-          setPolling(false);
-        }
-      });
-      reviewApi.logs(id).then((r) => {
-        setLogs(r.data);
-        const hasComplete = r.data.some(
-          (l: ReviewLog) =>
-            l.message === "审查完成" ||
-            (l.level === "error" && l.step === "generate_report"),
-        );
-        if (hasComplete) setLogPolling(false);
-      });
-    };
-
     fetchAll();
     setLoading(false);
+  }, [id, fetchAll]);
+
+  // Polling: only when status or logs are still pending
+  useEffect(() => {
+    if (!id || (!polling && !logPolling)) return;
     const interval = setInterval(fetchAll, 2000);
     return () => clearInterval(interval);
-  }, [id]);
+  }, [id, polling, logPolling, fetchAll]);
 
   // ── Loading state ──
   if (loading && polling) {
