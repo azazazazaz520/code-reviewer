@@ -90,7 +90,8 @@ def update_repo(repo_id: str, body: RepoCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="仓库不存在")
     repo.name = body.name
     repo.git_url = body.git_url
-    repo.local_path = body.local_path
+    if body.local_path is not None:
+        repo.local_path = body.local_path
     repo.default_branch = body.default_branch
     db.commit()
     db.refresh(repo)
