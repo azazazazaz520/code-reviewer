@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     # 仓库存储
     repos_dir: str = "./data/repos"
 
+    # 前端静态文件
+    frontend_dist_dir: str = "../frontend/dist"
+
     # CORS — 开发环境默认覆盖常见 Vite 端口
     cors_origins: list[str] = [
         "http://localhost:5173",
