@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 class RepoCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     git_url: str = Field(..., min_length=1, max_length=500)
-    local_path: str = Field(..., min_length=1, max_length=500)
+    local_path: str | None = Field(default=None, max_length=500)
     default_branch: str = Field(default="main", max_length=100)
 
 
