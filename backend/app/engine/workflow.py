@@ -158,7 +158,7 @@ def _try_crg_context(
     """Try CRG blast-radius analysis. Returns True on success, False on any failure."""
     try:
         from code_review_graph.tools.review import get_review_context
-        from code_review_graph.main import main as crg_build
+        from code_review_graph.tools.build import build_or_update_graph
     except ImportError:
         return False
 
@@ -166,7 +166,7 @@ def _try_crg_context(
     crg_dir = Path(repo_path) / ".code-review-graph"
     if not crg_dir.exists():
         try:
-            crg_build(["build", "--repo", repo_path], standalone_mode=False)
+            build_or_update_graph(full_rebuild=True, repo_root=repo_path)
         except Exception:
             return False
 
