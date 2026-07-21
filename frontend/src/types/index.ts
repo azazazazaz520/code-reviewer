@@ -2,7 +2,7 @@ export interface Repo {
   id: string;
   name: string;
   git_url: string;
-  local_path: string;
+  local_path?: string;  // backend auto-fills, not shown/edited in UI
   default_branch: string;
   created_at: string;
 }

@@ -102,7 +102,7 @@ export default function RepoDetail() {
       </div>
 
       <p className="break-all text-sm text-muted-foreground">
-        {repo.git_url} · 本地: {repo.local_path}
+        {repo.git_url}
         {confirmDelete ? (
           <span className="mt-2 inline-flex items-center gap-2 sm:ml-4 sm:mt-0">
             确定删除？{" "}

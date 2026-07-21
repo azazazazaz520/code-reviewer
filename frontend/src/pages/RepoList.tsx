@@ -25,7 +25,6 @@ export default function RepoList() {
   /* form state */
   const [name, setName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
-  const [localPath, setLocalPath] = useState("");
   const [defaultBranch, setDefaultBranch] = useState("main");
   const [saving, setSaving] = useState(false);
 
@@ -39,7 +38,6 @@ export default function RepoList() {
     setEditing(null);
     setName("");
     setGitUrl("");
-    setLocalPath("");
     setDefaultBranch("main");
     setShowForm(true);
   };
@@ -48,19 +46,18 @@ export default function RepoList() {
     setEditing(repo);
     setName(repo.name);
     setGitUrl(repo.git_url);
-    setLocalPath(repo.local_path);
     setDefaultBranch(repo.default_branch);
     setShowForm(true);
   };
 
   const handleSave = async () => {
-    if (!name || !gitUrl || !localPath) return;
+    if (!name || !gitUrl) return;
     setSaving(true);
     try {
       if (editing) {
-        await repoApi.update(editing.id, { name, git_url: gitUrl, local_path: localPath, default_branch: defaultBranch });
+        await repoApi.update(editing.id, { name, git_url: gitUrl, default_branch: defaultBranch });
       } else {
-        await repoApi.create({ name, git_url: gitUrl, local_path: localPath, default_branch: defaultBranch });
+        await repoApi.create({ name, git_url: gitUrl, default_branch: defaultBranch });
       }
       setShowForm(false);
       load();
@@ -97,7 +94,6 @@ export default function RepoList() {
               <TableRow>
                 <TableHead className="px-6 py-3 text-muted-foreground">名称</TableHead>
                 <TableHead className="px-6 py-3 text-muted-foreground">Git URL</TableHead>
-                <TableHead className="px-6 py-3 text-muted-foreground">本地路径</TableHead>
                 <TableHead className="px-6 py-3 text-muted-foreground">默认分支</TableHead>
                 <TableHead className="px-6 py-3 text-right text-muted-foreground w-48">操作</TableHead>
               </TableRow>
@@ -105,7 +101,7 @@ export default function RepoList() {
             <TableBody>
               {repos.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={5} className="px-6 py-12 text-center text-muted-foreground">
+                  <TableCell colSpan={4} className="px-6 py-12 text-center text-muted-foreground">
                     暂无仓库，点击「添加仓库」开始
                   </TableCell>
                 </TableRow>
@@ -115,9 +111,6 @@ export default function RepoList() {
                     <TableCell className="px-6 py-3 font-medium">{r.name}</TableCell>
                     <TableCell className="px-6 py-3 max-w-[240px] truncate text-muted-foreground" title={r.git_url}>
                       {r.git_url}
-                    </TableCell>
-                    <TableCell className="px-6 py-3 max-w-[240px] truncate text-muted-foreground" title={r.local_path}>
-                      {r.local_path}
                     </TableCell>
                     <TableCell className="px-6 py-3 text-muted-foreground">{r.default_branch}</TableCell>
                     <TableCell className="px-6 py-3 text-right">
@@ -159,17 +152,13 @@ export default function RepoList() {
                 <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={gitUrl} onChange={(e) => setGitUrl(e.target.value)} placeholder="https://github.com/..." />
               </div>
               <div>
-                <label className="text-sm font-medium">本地路径</label>
-                <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={localPath} onChange={(e) => setLocalPath(e.target.value)} placeholder="/path/to/repo" />
-              </div>
-              <div>
                 <label className="text-sm font-medium">默认分支</label>
                 <input className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={defaultBranch} onChange={(e) => setDefaultBranch(e.target.value)} />
               </div>
             </div>
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowForm(false)}>取消</Button>
-              <Button onClick={handleSave} disabled={saving || !name || !gitUrl || !localPath}>
+              <Button onClick={handleSave} disabled={saving || !name || !gitUrl}>
                 {saving ? "保存中..." : "保存"}
               </Button>
             </div>
