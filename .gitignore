@@ -218,3 +218,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+backend/data/code_reviewer.db
+.code-review-graph/
+
+.codegraph/

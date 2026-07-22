@@ -1,0 +1,107 @@
+export interface Repo {
+  id: string;
+  name: string;
+  git_url: string;
+  local_path?: string;  // backend auto-fills, not shown/edited in UI
+  default_branch: string;
+  created_at: string;
+}
+
+export interface ReviewTask {
+  id: string;
+  repo_id: string;
+  repo_name?: string;
+  review_type: "pr" | "local";
+  pr_number: number | null;
+  commit_hash: string | null;
+  base_branch: string | null;
+  status: "pending" | "running" | "done" | "failed";
+  risk_level?: string | null;
+  error_message: string | null;
+  reflection_rounds: number;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface Finding {
+  severity: "critical" | "high" | "medium" | "low";
+  file: string;
+  line: number;
+  title: string;
+  reason: string;
+  suggestion: string;
+}
+
+export interface ReviewReport {
+  summary: string;
+  risk_level: "low" | "medium" | "high" | "critical";
+  findings: Finding[];
+  stats: {
+    total_findings: number;
+    by_severity: Record<string, number>;
+    impacted_files: number;
+    test_gaps: number;
+  };
+}
+
+export interface ReviewReportResponse {
+  review_id: string;
+  status: string;
+  report: ReviewReport | null;
+}
+
+export interface OverviewStats {
+  total_reviews: number;
+  reviews_this_month: number;
+  active_repos: number;
+  risk_distribution: Record<string, number>;
+  recent_reviews: ReviewTask[];
+}
+
+// ─── 热力图 ──────────────────────────────────────
+
+export interface HeatmapCell {
+  month: string;
+  review_count: number;
+  worst_risk: string | null;
+}
+
+export interface HeatmapRepoRow {
+  repo_id: string;
+  repo_name: string;
+  cells: HeatmapCell[];
+}
+
+export interface HeatmapData {
+  months: string[];
+  repos: HeatmapRepoRow[];
+}
+
+// ─── PR / Commit 列表 ─────────────────────────────
+
+export interface PRItem {
+  number: number;
+  title: string;
+  author: string;
+  branch: string;
+  created_at: string;
+}
+
+export interface CommitItem {
+  hash: string;
+  short_hash: string;
+  message: string;
+  author: string;
+  date: string;
+}
+
+export interface ReviewLog {
+  id: string;
+  task_id: string;
+  step: string;
+  level: string;
+  message: string;
+  tool_name?: string | null;
+  tool_args?: string | null;
+  created_at: string;
+}
