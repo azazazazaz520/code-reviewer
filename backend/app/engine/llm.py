@@ -133,8 +133,16 @@ class LLMProvider:
                         "content": tool_result if isinstance(tool_result, str) else json.dumps(tool_result, ensure_ascii=False),
                     })
 
-        # 超过 max_rounds，强制要求 LLM 输出最终结果
-        msgs.append({"role": "user", "content": "请基于以上所有工具调用结果，给出最终审查结论。"})
+        # 超过 max_rounds，强制要求 LLM 输出最终结果。
+        # 这里必须重复机器可解析的输出契约，否则模型容易返回 Markdown 说明，
+        # 让 Reviewer 看起来像“没有问题”，实际却没有完成审查。
+        msgs.append({
+            "role": "user",
+            "content": (
+                "请基于以上所有工具调用结果完成审查。只返回符合系统要求的 JSON 数组；"
+                "如果没有满足报告门槛的问题，严格返回 []；不要输出 Markdown、解释文字或代码围栏。"
+            ),
+        })
         final = self.chat(msgs)
         return final.get("content", "")
 

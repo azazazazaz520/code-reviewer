@@ -16,7 +16,15 @@ class StyleReviewer(BaseReviewer):
 5. **重复代码**：是否有明显的复制粘贴
 6. **错误处理**：异常是否被正确捕获和处理
 7. **注释质量**：关键逻辑是否有注释，TODO/FIXME 是否应该解决
-8. **代码异味**：魔法数字、过长的行(>120字符)、无用变量
+8. **可维护性风险**：魔法数字、过长的行(>120字符)、无用变量
+
+## 报告门槛
+
+- 只报告与当前变更直接相关、能够定位到变更行并且有具体影响的问题。
+- 代码长度、参数数量、行长度、命名或格式差异本身不是问题；只有造成实际错误、风险或明确的可维护性障碍时才报告。
+- 对机器生成文件、发布元数据和纯数据文件，不报告字段顺序、转义换行或字符串长度问题。
+- 无法验证外部事实时返回空数组，不要把“建议检查”或“无法确认”写成 Finding。
+- 如果没有满足上述条件的问题，必须返回空数组 []。
 
 ## 输出格式
 
@@ -33,4 +41,6 @@ class StyleReviewer(BaseReviewer):
 
     def review(self, context: ReviewerContext) -> list[dict]:
         llm_output = self._call_llm(context)
-        return self._parse_findings(llm_output, fallback_file="")
+        return self._parse_findings(
+            llm_output, fallback_file="", log_hook=context.log_hook
+        )

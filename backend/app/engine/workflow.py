@@ -1,6 +1,6 @@
 """Review Workflow — 基于 LangGraph 的审查流程。
 
-Load PR → Planning → Collect Context → Run Reviews → Reflection → Generate Report
+Load PR → Planning → Validate Changes → Collect Context → Run Reviews → Reflection → Generate Report
                                     ↑                              │
                                     └── need_more_context ─────────┘
 """
@@ -21,6 +21,9 @@ from app.engine.tools.get_pr_diff import get_pr_diff, get_pr_changed_files
 from app.engine.tools.read_file import read_file
 from app.engine.snapshot import create_review_snapshot
 from app.engine.context import select_reviewer_context
+from app.engine.finding_gate import filter_findings
+from app.engine.scope import build_review_plan, classify_files
+from app.engine.validators.release import validate_release_manifest
 
 
 # ─── LangGraph Nodes ──────────────────────────────────
@@ -85,36 +88,56 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
 
 
 def _planning_node(state: ReviewState) -> ReviewState:
-    """Node 2: 决定执行哪些 Reviewer。双层策略：
-    - 软策略：文件类型规则
-    - 硬触发器：安全关键词 + CRG 热点节点
-    """
-    plan = []
+    """Node 2: 根据变更范围决定 Reviewer。"""
     changed = state.get("changed_files", [])
     diff = state.get("raw_diff", "")
 
     if hook := state.get("_log_hook"):
         hook(step="planning", level="info", message="正在规划审查策略...")
 
-    # 文件类型规则
-    if any(f.endswith(".py") or f.endswith(".js") or f.endswith(".ts") for f in changed):
-        plan.append("style_reviewer")
-    if any(f.endswith(".py") for f in changed):
-        plan.append("performance_reviewer")
-
-    # 安全关键词硬触发器
-    security_keywords = ["sql", "password", "token", "secret", "pickle", "yaml.load",
-                         "eval(", "exec(", "subprocess", "os.system", "shell=True"]
-    if any(kw in diff.lower() for kw in security_keywords):
-        plan.append("security_reviewer")
-
-    state["review_plan"] = plan if plan else ["style_reviewer"]
+    state["review_plan"] = build_review_plan(changed, diff)
+    state["change_scopes"] = {
+        path: scope.kind for path, scope in classify_files(changed).items()
+    }
 
     if hook := state.get("_log_hook"):
-        plan_str = ", ".join(state["review_plan"]) if state["review_plan"] else "(default style)"
+        plan_str = ", ".join(state["review_plan"]) if state["review_plan"] else "(无需通用 Reviewer)"
         hook(step="planning", level="info",
              message=f"审查策略: {plan_str}")
 
+    return state
+
+
+def _validate_changes_node(state: ReviewState) -> ReviewState:
+    """Node 3: 使用确定性校验器检查可验证的变更契约。"""
+    repo_path = state.get("repo_id", ".")
+    changed_files = state.get("changed_files", [])
+    validator_findings: list[dict] = []
+    checks: list[dict] = []
+
+    for path, scope in classify_files(changed_files).items():
+        if scope.kind != "release_manifest":
+            continue
+
+        result = validate_release_manifest(
+            str(Path(repo_path) / path),
+            set(),
+            repo_path,
+        )
+        validator_findings.extend(result.findings)
+        checks.extend(result.checks)
+
+    state["validator_findings"] = validator_findings
+    state["checks"] = checks
+    if hook := state.get("_log_hook"):
+        hook(
+            step="validate_changes",
+            level="info",
+            message=(
+                f"确定性校验完成: {len(validator_findings)} 个问题，"
+                f"{len(checks)} 个检查项"
+            ),
+        )
     return state
 
 
@@ -125,6 +148,17 @@ def _collect_context_node(state: ReviewState) -> ReviewState:
     """
     repo_path = state.get("repo_id", ".")
     changed_files = state.get("changed_files", [])
+
+    if not state.get("review_plan"):
+        state["context_initialized"] = True
+        state["context_candidates"] = []
+        if hook := state.get("_log_hook"):
+            hook(
+                step="collect_context",
+                level="info",
+                message="当前变更由确定性校验器覆盖，无需收集 LLM 上下文",
+            )
+        return state
 
     if hook := state.get("_log_hook"):
         hook(step="collect_context", level="info",
@@ -146,11 +180,13 @@ def _collect_context_node(state: ReviewState) -> ReviewState:
     start = round_number * batch_size
     batch = candidates[start:start + batch_size]
 
+    new_count = 0
     for file_path in batch:
         if file_path in cache:
             continue
         full_path = Path(repo_path) / file_path
         cache[file_path] = read_file(str(full_path), start_line=1, max_lines=200)
+        new_count += 1
 
     state["context_round"] = round_number + 1
     state["file_context_cache"] = cache
@@ -171,7 +207,7 @@ def _collect_context_node(state: ReviewState) -> ReviewState:
             level="info",
             message=(
                 f"已收集 {len(cache)} 个文件 ({source})，"
-                f"本轮新增 {len([p for p in batch if p in cache])} 个"
+                f"本轮新增 {new_count} 个"
             ),
         )
 
@@ -227,7 +263,8 @@ def _try_crg_context(
 
 def _run_reviews_node(state: ReviewState) -> ReviewState:
     """Node 4: 并行执行所有 Reviewer，收集 Findings。"""
-    all_findings = []
+    all_findings = list(state.get("validator_findings", []))
+    workflow_errors = list(state.get("workflow_errors", []))
     for reviewer_name in state.get("review_plan", []):
         reviewer = REVIEWER_REGISTRY.get(reviewer_name)
         if reviewer:
@@ -250,16 +287,42 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                 findings = reviewer.review(context)
                 all_findings.extend(findings)
             except Exception as e:
-                all_findings.append({
-                    "severity": "low",
-                    "file": "",
-                    "line": 0,
-                    "title": f"Reviewer '{reviewer_name}' 异常",
-                    "reason": str(e),
-                    "suggestion": "检查 Reviewer 实现或 LLM 配置",
-                })
+                error = {"reviewer": reviewer_name, "message": str(e)}
+                workflow_errors.append(error)
+                if hook := state.get("_log_hook"):
+                    hook(
+                        step="run_reviews",
+                        level="error",
+                        message=f"{reviewer_name} 执行失败: {e}",
+                    )
 
-    state["findings"] = all_findings
+    state["workflow_errors"] = workflow_errors
+    state["checks"] = list(state.get("checks", []))
+    for error in workflow_errors:
+        state["checks"].append(
+            {
+                "name": f"reviewer_{error['reviewer']}",
+                "status": "error",
+                "message": error["message"],
+            }
+        )
+    accepted_findings = filter_findings(
+        all_findings,
+        state.get("changed_files", []),
+        state.get("raw_diff", ""),
+    )
+    evidence_count = sum(
+        finding.get("evidence_type") in {"static_check", "tool_verified"}
+        for finding in accepted_findings
+    )
+    state["quality_metrics"] = {
+        "candidate_findings": len(all_findings),
+        "accepted_findings": len(accepted_findings),
+        "filtered_findings": len(all_findings) - len(accepted_findings),
+        "located_findings": sum(finding.get("line", 0) > 0 for finding in accepted_findings),
+        "static_evidence_findings": evidence_count,
+    }
+    state["findings"] = accepted_findings
     return state
 
 
@@ -283,7 +346,9 @@ def _reflection_node(state: ReviewState) -> ReviewState:
     loaded = state.get("file_context_cache", {})
     has_unread_candidates = any(path not in loaded for path in candidates)
 
-    if state["reflection_round"] >= max_rounds:
+    if not findings:
+        state["need_more_context"] = False
+    elif state["reflection_round"] >= max_rounds:
         state["need_more_context"] = False
     elif (
         not has_line_refs
@@ -331,18 +396,25 @@ def _generate_report_node(state: ReviewState) -> ReviewState:
 
     total = len(findings)
     high_count = severity_count.get("high", 0)
+    review_status = "degraded" if state.get("workflow_errors") else "complete"
     summary = f"本次审查发现 {total} 个问题"
     if high_count > 0:
         summary += f"（{high_count} 个高危）"
+    if review_status == "degraded":
+        summary += "；审查未完整覆盖，请查看校验摘要"
 
     state["summary"] = summary
     state["risk_level"] = risk
+    state["review_status"] = review_status
 
     # 存储 report 到 state（供外部读取）
     state["report"] = {
         "summary": summary,
         "risk_level": risk,
+        "review_status": review_status,
         "findings": findings,
+        "checks": state.get("checks", []),
+        "quality": state.get("quality_metrics", {}),
         "stats": {
             "total_findings": total,
             "by_severity": severity_count,
@@ -361,6 +433,7 @@ def _build_graph() -> StateGraph:
 
     builder.add_node("load_pr", _load_pr_node)
     builder.add_node("planning", _planning_node)
+    builder.add_node("validate_changes", _validate_changes_node)
     builder.add_node("collect_context", _collect_context_node)
     builder.add_node("run_reviews", _run_reviews_node)
     builder.add_node("reflection", _reflection_node)
@@ -368,7 +441,8 @@ def _build_graph() -> StateGraph:
 
     builder.set_entry_point("load_pr")
     builder.add_edge("load_pr", "planning")
-    builder.add_edge("planning", "collect_context")
+    builder.add_edge("planning", "validate_changes")
+    builder.add_edge("validate_changes", "collect_context")
     builder.add_edge("collect_context", "run_reviews")
     builder.add_edge("run_reviews", "reflection")
 
@@ -418,16 +492,22 @@ def run_workflow(
             "changed_files": snapshot.changed_files,
             "snapshot_revision": snapshot.revision,
             "snapshot_base_revision": snapshot.base_revision,
-        "review_plan": [],
-        "context_candidates": [],
-        "context_round": 0,
-        "context_initialized": False,
+            "review_plan": [],
+            "context_candidates": [],
+            "context_round": 0,
+            "context_initialized": False,
+            "validator_findings": [],
+            "checks": [],
+            "workflow_errors": [],
+            "quality_metrics": {},
+            "change_scopes": {},
             "file_context_cache": {},
             "findings": [],
             "reflection_round": 0,
             "need_more_context": False,
             "summary": "",
             "risk_level": "low",
+            "review_status": "complete",
             "crg_enabled": True,
             "impact_radius": None,
             "_log_hook": log_hook,

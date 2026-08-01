@@ -17,6 +17,13 @@ class SecurityReviewer(BaseReviewer):
 6. **命令注入**：os.system、subprocess 使用 shell=True 且参数来自用户输入
 7. **缺失认证/授权检查**
 
+## 报告门槛
+
+- 只报告能够从当前 diff、源码或工具结果直接证明的安全风险。
+- 不要把无法访问的外部资源、无法确认的配置或“建议检查”写成 Finding。
+- 每个问题必须说明具体攻击或失败场景，并定位到变更文件和行号。
+- 如果没有满足上述条件的安全问题，必须返回空数组 []。
+
 ## 输出格式
 
 严格返回 JSON 数组，每个发现包含以下字段：
@@ -46,4 +53,6 @@ class SecurityReviewer(BaseReviewer):
 
     def review(self, context: ReviewerContext) -> list[dict]:
         llm_output = self._call_llm(context)
-        return self._parse_findings(llm_output, fallback_file="")
+        return self._parse_findings(
+            llm_output, fallback_file="", log_hook=context.log_hook
+        )

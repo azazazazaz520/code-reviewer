@@ -85,14 +85,32 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
             review_id=task.id, status=task.status, report=None
         )
 
+    stats = json.loads(report.stats_json)
+    checks = stats.pop("checks", [])
+    quality = stats.pop("quality", {})
+    review_status = stats.pop("review_status", None)
+    if not review_status:
+        review_status = (
+            "degraded"
+            if any(check.get("status") in {"error", "fail"} for check in checks)
+            else "complete"
+        )
+
+    summary = report.summary
+    if review_status == "degraded" and "未完整覆盖" not in summary:
+        summary += "；审查未完整覆盖，请查看校验摘要"
+
     return ReviewReportResponse(
         review_id=task.id,
         status=task.status,
         report=ReportContent(
-            summary=report.summary,
+            summary=summary,
             risk_level=report.risk_level,
+            review_status=review_status,
             findings=json.loads(report.findings_json),
-            stats=json.loads(report.stats_json),
+            stats=stats,
+            checks=checks,
+            quality=quality,
         ),
     )
 
@@ -160,7 +178,15 @@ def _run_review_workflow(task_id: str):
             summary=result["summary"],
             risk_level=result["risk_level"],
             findings_json=json.dumps(result["findings"], ensure_ascii=False),
-            stats_json=json.dumps(result["stats"], ensure_ascii=False),
+            stats_json=json.dumps(
+                {
+                    **result["stats"],
+                    "checks": result.get("checks", []),
+                    "quality": result.get("quality", {}),
+                    "review_status": result.get("review_status", "complete"),
+                },
+                ensure_ascii=False,
+            ),
         )
         db.add(report)
         task.status = "done"

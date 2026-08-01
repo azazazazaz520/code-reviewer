@@ -20,6 +20,13 @@ class ReviewState(TypedDict, total=False):
     context_candidates: list[str]
     context_round: int
     context_initialized: bool
+    change_scopes: dict[str, str]
+
+    # 确定性校验与审查质量
+    validator_findings: list[dict]
+    checks: list[dict]
+    workflow_errors: list[dict]
+    quality_metrics: dict
 
     # 审查计划
     review_plan: list[str]  # ["security_reviewer", "style_reviewer", ...]
@@ -37,6 +44,7 @@ class ReviewState(TypedDict, total=False):
     # 最终报告
     summary: str
     risk_level: str  # "low" / "medium" / "high" / "critical"
+    review_status: str  # "complete" / "degraded"
     report: dict  # 最终输出
 
     # CRG 集成（可选）

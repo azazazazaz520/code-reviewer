@@ -88,6 +88,20 @@ class ReviewStats(BaseModel):
     test_gaps: int
 
 
+class ReviewCheck(BaseModel):
+    name: str
+    status: str
+    message: str
+
+
+class ReviewQualityMetrics(BaseModel):
+    candidate_findings: int = 0
+    accepted_findings: int = 0
+    filtered_findings: int = 0
+    located_findings: int = 0
+    static_evidence_findings: int = 0
+
+
 class ReviewReportResponse(BaseModel):
     review_id: str
     status: str
@@ -99,6 +113,9 @@ class ReportContent(BaseModel):
     risk_level: RiskLevel
     findings: list[FindingSchema]
     stats: ReviewStats
+    review_status: str = "complete"
+    checks: list[ReviewCheck] = Field(default_factory=list)
+    quality: ReviewQualityMetrics = Field(default_factory=ReviewQualityMetrics)
 
 
 # ─── 统计 ──────────────────────────────────────────

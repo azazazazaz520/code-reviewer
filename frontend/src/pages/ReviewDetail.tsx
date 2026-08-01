@@ -55,25 +55,52 @@ export default function ReviewDetail() {
   const [logs, setLogs] = useState<ReviewLog[]>([]);
   const [logPolling, setLogPolling] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [reportError, setReportError] = useState<string | null>(null);
 
-  const fetchAll = useCallback(() => {
+  const fetchAll = useCallback(async () => {
     if (!id) return;
-    reviewApi.status(id).then((r) => setTask(r.data));
-    reviewApi.report(id).then((r) => {
-      if (r.data.report) setReport(r.data.report);
-      if (r.data.status !== "pending" && r.data.status !== "running") {
-        setPolling(false);
+    const [statusResult, reportResult, logsResult] = await Promise.allSettled([
+      reviewApi.status(id),
+      reviewApi.report(id),
+      reviewApi.logs(id),
+    ]);
+
+    const status =
+      statusResult.status === "fulfilled" ? statusResult.value.data : null;
+    const reportResponse =
+      reportResult.status === "fulfilled" ? reportResult.value.data : null;
+
+    if (status) setTask(status);
+
+    if (reportResponse?.report) {
+      setReport(reportResponse.report);
+      setReportError(null);
+    }
+
+    const terminalStatus = status?.status ?? reportResponse?.status;
+    const isTerminal =
+      terminalStatus !== undefined &&
+      terminalStatus !== "pending" &&
+      terminalStatus !== "running";
+
+    if (isTerminal) {
+      setPolling(false);
+      if (reportResult.status === "rejected") {
+        setReportError("审查已结束，但报告读取失败，请稍后重试");
+      } else if (!reportResponse?.report && terminalStatus === "done") {
+        setReportError("审查已结束，但报告记录不可用");
       }
-    });
-    reviewApi.logs(id).then((r) => {
-      setLogs(r.data);
-      const hasComplete = r.data.some(
+    }
+
+    if (logsResult.status === "fulfilled") {
+      setLogs(logsResult.value.data);
+      const hasComplete = logsResult.value.data.some(
         (l: ReviewLog) =>
           l.message === "审查完成" ||
           (l.level === "error" && l.step === "generate_report"),
       );
       if (hasComplete) setLogPolling(false);
-    });
+    }
   }, [id]);
 
   // Initial fetch
@@ -127,6 +154,24 @@ export default function ReviewDetail() {
     );
   }
 
+  if (!report && !polling && reportError) {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
+          <h2 className="text-lg font-semibold text-destructive flex items-center gap-2">
+            <TriangleAlert className="h-5 w-5" />
+            报告不可用
+          </h2>
+          <p className="text-destructive/80 mt-2">{reportError}</p>
+        </div>
+      </div>
+    );
+  }
+
   // ── No report, not polling, not failed ──
   if (!report && !polling && task?.status !== "failed") {
     return (
@@ -150,6 +195,10 @@ export default function ReviewDetail() {
   );
   const riskConfig = getSeverityConfig(report.risk_level);
   const RiskIcon = riskConfig.icon;
+  const isDegraded = report.review_status === "degraded";
+  const attentionChecks = (report.checks ?? []).filter(
+    (check) => check.status !== "pass",
+  );
 
   const allFindings = report.findings;
   const filteredFindings = filterSeverity
@@ -175,13 +224,48 @@ export default function ReviewDetail() {
       )}
 
       {/* Risk level header */}
-      <div className={`rounded-lg border p-4 ${riskBannerClass[report.risk_level] ?? "bg-card"}`}>
-        <Badge variant={riskVariantMap[report.risk_level]}>
-          <RiskIcon className="h-3.5 w-3.5" />
-          {report.risk_level.toUpperCase()}
+      <div
+        className={`rounded-lg border p-4 ${
+          isDegraded
+            ? "border-severity-medium/40 bg-severity-medium/10"
+            : riskBannerClass[report.risk_level] ?? "bg-card"
+        }`}
+      >
+        <Badge variant={isDegraded ? "medium" : riskVariantMap[report.risk_level]}>
+          {isDegraded ? (
+            "审查不完整"
+          ) : (
+            <>
+              <RiskIcon className="h-3.5 w-3.5" />
+              {report.risk_level.toUpperCase()}
+            </>
+          )}
         </Badge>
         <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
+
+      {attentionChecks.length > 0 && (
+        <div className="rounded-lg border bg-card p-4">
+          <h3 className="text-sm font-medium mb-2">校验摘要</h3>
+          <div className="space-y-2 text-sm">
+            {attentionChecks.map((check) => (
+              <div key={check.name} className="flex items-start gap-2">
+                <span
+                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
+                    check.status === "error" || check.status === "fail"
+                      ? "bg-destructive"
+                      : "bg-severity-medium"
+                  }`}
+                />
+                <div>
+                  <div className="font-medium">{check.name}</div>
+                  <div className="text-muted-foreground">{check.message}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <Separator />
 

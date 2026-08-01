@@ -6,12 +6,17 @@ Reviewer = System Prompt + Tool 列表 + LLM 调用 → Finding[]。
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Callable
 
 from app.engine.tools.registry import TOOL_REGISTRY, get_tools_for_reviewer
 from app.engine.llm import get_llm, LLMProvider
+
+
+class ReviewerOutputError(ValueError):
+    """Reviewer 返回结果无法按约定解析时使用的可观察错误。"""
 
 
 @dataclass
@@ -112,58 +117,65 @@ class BaseReviewer(ABC):
             result = self.llm.chat(messages)
             return result.get("content", "")
 
-    def _parse_findings(self, llm_output: str, fallback_file: str = "") -> list[dict]:
+    def _parse_findings(
+        self,
+        llm_output: str,
+        fallback_file: str = "",
+        log_hook: Callable | None = None,
+    ) -> list[dict]:
         """从 LLM 输出中解析 Finding 列表。
 
         期望 LLM 返回 JSON 数组，容错处理非 JSON 输出。
         """
-        text = llm_output.strip()
+        text = (llm_output or "").strip()
 
-        # 策略 1: ```json ... ``` 代码块
-        try:
-            if "```json" in text:
-                block = text.split("```json")[1].split("```")[0]
-                findings = json.loads(block)
-                if isinstance(findings, dict):
-                    findings = findings.get("findings", [])
-                if isinstance(findings, list):
+        def normalise(findings: list) -> list[dict]:
+            return [
+                {**finding, "evidence_type": finding.get("evidence_type", "reviewer")}
+                for finding in findings
+                if isinstance(finding, dict)
+            ]
+
+        def parse_candidate(candidate: str) -> list[dict] | None:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                if "findings" not in parsed:
+                    return None
+                parsed = parsed["findings"]
+            if isinstance(parsed, list):
+                return normalise(parsed)
+            return None
+
+        candidates = [
+            match.group(1)
+            for match in re.finditer(r"```(?:json)?\s*(.*?)```", text, re.IGNORECASE | re.DOTALL)
+        ]
+        candidates.append(text)
+
+        decoder = json.JSONDecoder()
+        for candidate in candidates:
+            try:
+                findings = parse_candidate(candidate.strip())
+                if findings is not None:
                     return findings
-        except (json.JSONDecodeError, IndexError):
-            pass
+            except json.JSONDecodeError:
+                pass
 
-        # 策略 2: ``` ... ``` 代码块
-        try:
-            if "```" in text:
-                block = text.split("```")[1].split("```")[0]
-                findings = json.loads(block)
-                if isinstance(findings, dict):
-                    findings = findings.get("findings", [])
-                if isinstance(findings, list):
-                    return findings
-        except (json.JSONDecodeError, IndexError):
-            pass
+            # 兼容模型在 JSON 前后附带说明文字的情况。
+            for marker in ("[", "{"):
+                start = candidate.find(marker)
+                while start != -1:
+                    try:
+                        parsed, _ = decoder.raw_decode(candidate[start:])
+                        if isinstance(parsed, dict) and "findings" in parsed:
+                            parsed = parsed["findings"]
+                        if isinstance(parsed, list):
+                            return normalise(parsed)
+                    except json.JSONDecodeError:
+                        pass
+                    start = candidate.find(marker, start + 1)
 
-        # 策略 3: 全文本中提取 JSON 数组 [...]
-        try:
-            start = text.find("[")
-            end = text.rfind("]")
-            if start != -1 and end != -1 and end > start:
-                candidate = text[start:end + 1]
-                findings = json.loads(candidate)
-                if isinstance(findings, list):
-                    return findings
-        except (json.JSONDecodeError, IndexError):
-            pass
-
-        # 无法解析，返回错误 Finding
-        return [{
-            "severity": "low",
-            "file": fallback_file,
-            "line": 0,
-            "title": "LLM 输出解析失败",
-            "reason": llm_output[:200],
-            "suggestion": "检查 Reviewer Prompt 是否要求输出 JSON 格式",
-        }]
+        raise ReviewerOutputError(f"{self.name} 输出无法解析为 Finding JSON")
 
     @abstractmethod
     def review(self, context: ReviewerContext) -> list[dict]:

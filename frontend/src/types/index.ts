@@ -35,13 +35,30 @@ export interface Finding {
 export interface ReviewReport {
   summary: string;
   risk_level: "low" | "medium" | "high" | "critical";
+  review_status?: "complete" | "degraded" | string;
   findings: Finding[];
+  checks?: ReviewCheck[];
+  quality?: ReviewQualityMetrics;
   stats: {
     total_findings: number;
     by_severity: Record<string, number>;
     impacted_files: number;
     test_gaps: number;
   };
+}
+
+export interface ReviewCheck {
+  name: string;
+  status: "pass" | "fail" | "unverified" | "error" | string;
+  message: string;
+}
+
+export interface ReviewQualityMetrics {
+  candidate_findings: number;
+  accepted_findings: number;
+  filtered_findings: number;
+  located_findings: number;
+  static_evidence_findings: number;
 }
 
 export interface ReviewReportResponse {

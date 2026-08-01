@@ -14,7 +14,7 @@ dependencies = [
     "langchain-openai>=0.2",
     "code-review-graph>=2.3",
     "jinja2>=3.1",
-    "httpx>=0.27",
+    "httpx[socks]>=0.27",
     "python-multipart>=0.0.9",
 ]
 
