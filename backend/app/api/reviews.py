@@ -1,8 +1,7 @@
 import json
-import subprocess
 from datetime import datetime, UTC
 
-from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.base import get_db
@@ -14,7 +13,6 @@ from app.models.schemas import (
     ReportContent,
     ReviewLogResponse,
 )
-from app.engine.llm import set_log_hook
 
 router = APIRouter(prefix="/api", tags=["reviews"])
 
@@ -25,10 +23,9 @@ router = APIRouter(prefix="/api", tags=["reviews"])
 def submit_review(
     repo_id: str,
     body: ReviewCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """提交审查任务。立即返回 review_id，后台异步执行审查。"""
+    """提交审查任务。立即返回 review_id，由持久化 worker 异步执行。"""
     repo = db.query(Repo).filter(Repo.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="仓库不存在")
@@ -44,9 +41,6 @@ def submit_review(
     db.add(task)
     db.commit()
     db.refresh(task)
-
-    # 后台执行审查引擎
-    background_tasks.add_task(_run_review_workflow, task.id)
 
     return task
 
@@ -118,6 +112,7 @@ def _run_review_workflow(task_id: str):
             return
 
         task.status = "running"
+        task.error_message = None
         db.commit()
 
         repo = db.query(Repo).filter(Repo.id == task.repo_id).first()
@@ -139,27 +134,8 @@ def _run_review_workflow(task_id: str):
                 db.add(log_entry)
                 db.commit()
             except Exception:
+                db.rollback()
                 pass  # 日志写入失败不影响审查流程
-
-        set_log_hook(log_hook)
-
-        # 审查前拉取最新代码
-        try:
-            fetch_result = subprocess.run(
-                ["git", "-C", repo.local_path, "fetch", "origin",
-                 repo.default_branch],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                timeout=30,
-            )
-            if fetch_result.returncode != 0:
-                log_hook(step="load_pr", level="warn",
-                         message=f"git fetch 警告: {(fetch_result.stderr or '').strip()[:200]}")
-        except subprocess.TimeoutExpired:
-            log_hook(step="load_pr", level="warn", message="git fetch 超时，继续使用本地已有数据")
-        except Exception as e:
-            log_hook(step="load_pr", level="warn", message=f"git fetch 异常: {str(e)[:200]}")
 
         # 写入开始日志
         log_hook(step="load_pr", level="info",
@@ -200,7 +176,6 @@ def _run_review_workflow(task_id: str):
             task.completed_at = datetime.now(UTC)
             db.commit()
     finally:
-        set_log_hook(None)
         db.close()
 
 

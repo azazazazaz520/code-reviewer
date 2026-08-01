@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from typing import Callable
 
 from app.engine.tools.registry import TOOL_REGISTRY, get_tools_for_reviewer
 from app.engine.llm import get_llm, LLMProvider
@@ -19,6 +20,9 @@ class ReviewerContext:
     diff: str = ""
     changed_files: list[str] = field(default_factory=list)
     file_context: dict[str, str] = field(default_factory=dict)  # file_path → content
+    repo_root: str = ""
+    revision: str = ""
+    log_hook: Callable | None = None
 
 
 class BaseReviewer(ABC):
@@ -77,6 +81,12 @@ class BaseReviewer(ABC):
         if context.changed_files:
             user_parts.append(f"## 变更文件\n" + "\n".join(f"- {f}" for f in context.changed_files))
 
+        if context.repo_root:
+            user_parts.append(
+                f"## 审查快照\n根目录: {context.repo_root}\n"
+                f"revision: {context.revision or '(unknown)'}"
+            )
+
         if context.file_context:
             ctx_parts = []
             for fp, content in context.file_context.items():
@@ -95,7 +105,9 @@ class BaseReviewer(ABC):
         handlers = self._build_tool_handlers()
 
         if tools and handlers:
-            return self.llm.chat_with_tools(messages, tools, handlers)
+            return self.llm.chat_with_tools(
+                messages, tools, handlers, log_hook=context.log_hook
+            )
         else:
             result = self.llm.chat(messages)
             return result.get("content", "")

@@ -15,6 +15,11 @@ class ReviewState(TypedDict, total=False):
     # Diff 和变更文件
     raw_diff: str
     changed_files: list[str]
+    snapshot_revision: str
+    snapshot_base_revision: str
+    context_candidates: list[str]
+    context_round: int
+    context_initialized: bool
 
     # 审查计划
     review_plan: list[str]  # ["security_reviewer", "style_reviewer", ...]

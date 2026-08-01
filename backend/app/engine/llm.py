@@ -11,13 +11,6 @@ from openai import OpenAI
 from app.config import settings
 from typing import Callable
 
-_log_hook: Callable | None = None
-
-
-def set_log_hook(hook: Callable | None):
-    global _log_hook
-    _log_hook = hook
-
 
 class LLMProvider:
     """统一的 LLM 调用接口。"""
@@ -72,6 +65,7 @@ class LLMProvider:
         tools: list[dict],
         tool_handlers: dict[str, callable],
         max_rounds: int = 3,
+        log_hook: Callable | None = None,
     ) -> str:
         """LLM 调用 + 自动执行 tool_calls 循环。
 
@@ -108,7 +102,7 @@ class LLMProvider:
                     tool_result = handler(**tc["arguments"]) if handler else json.dumps({"error": f"unknown tool: {tc['name']}"})
 
                     # 日志插桩
-                    if _log_hook:
+                    if log_hook:
                         try:
                             args_str = json.dumps(tc["arguments"], ensure_ascii=False)
                             if len(args_str) > 200:
@@ -125,7 +119,7 @@ class LLMProvider:
                         if summary and len(summary) > 60:
                             summary = "..." + summary[-57:]
 
-                        _log_hook(
+                        log_hook(
                             step="tool_call",
                             level="info",
                             message=f"{tc['name']}: {summary}" if summary else tc["name"],

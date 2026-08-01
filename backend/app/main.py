@@ -15,6 +15,7 @@ import app.models.repo  # noqa: F401
 from app.api.repos import router as repos_router
 from app.api.reviews import router as reviews_router
 from app.api.stats import router as stats_router
+from app.services.review_runner import ReviewTaskRunner
 
 
 @asynccontextmanager
@@ -25,8 +26,14 @@ async def lifespan(app: FastAPI):
     # 确保 repos 目录存在
     Path(settings.repos_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
-    yield
-    engine.dispose()
+    runner = ReviewTaskRunner()
+    app.state.review_runner = runner
+    await runner.start()
+    try:
+        yield
+    finally:
+        await runner.stop()
+        engine.dispose()
 
 
 app = FastAPI(

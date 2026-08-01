@@ -8,6 +8,8 @@ class Settings(BaseSettings):
     # 审查引擎
     max_reflection_rounds: int = 3
     reviewer_timeout_seconds: int = 120
+    review_worker_poll_seconds: float = 1.0
+    context_files_per_round: int = 20
 
     # LLM
     llm_provider: str = "deepseek"

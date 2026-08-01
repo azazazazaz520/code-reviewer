@@ -19,6 +19,8 @@ from app.engine.reviewers import REVIEWER_REGISTRY, ReviewerContext
 from app.engine.tools.get_diff import get_diff, get_changed_files
 from app.engine.tools.get_pr_diff import get_pr_diff, get_pr_changed_files
 from app.engine.tools.read_file import read_file
+from app.engine.snapshot import create_review_snapshot
+from app.engine.context import select_reviewer_context
 
 
 # ─── LangGraph Nodes ──────────────────────────────────
@@ -30,6 +32,19 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
     PR 模式：从 GitHub API 获取 PR diff。
     Local 模式：从本地 git 获取 diff。
     """
+    # run_workflow 已经准备好不可变快照时，不再从工作区重新获取输入。
+    if state.get("snapshot_revision"):
+        if hook := state.get("_log_hook"):
+            hook(
+                step="load_pr",
+                level="info",
+                message=(
+                    f"使用审查快照 revision={state['snapshot_revision'][:12]} "
+                    f"base={state.get('snapshot_base_revision', '')[:12]}"
+                ),
+            )
+        return state
+
     review_type = state.get("review_type", "local")
     repo_path = state.get("repo_id", ".")
     pr_number = state.get("pr_number")
@@ -93,13 +108,6 @@ def _planning_node(state: ReviewState) -> ReviewState:
     if any(kw in diff.lower() for kw in security_keywords):
         plan.append("security_reviewer")
 
-    # CRG 热点触发器：变更触及 hub 节点时强制激活 Security Reviewer
-    if state.get("crg_enabled") and state.get("impact_radius"):
-        impact = state["impact_radius"]
-        if impact.get("impacted_nodes", 0) > 20 or impact.get("changed_nodes", 0) > 5:
-            if "security_reviewer" not in plan:
-                plan.append("security_reviewer")
-
     state["review_plan"] = plan if plan else ["style_reviewer"]
 
     if hook := state.get("_log_hook"):
@@ -113,47 +121,65 @@ def _planning_node(state: ReviewState) -> ReviewState:
 def _collect_context_node(state: ReviewState) -> ReviewState:
     """Node 3: 收集变更文件内容到缓存。
 
-    优先使用 CRG 爆炸半径分析（精准 ~15 个文件），
-    降级为逐文件 ReadFile（最多 20 个）。
+    先建立候选文件集合，再按轮次增量读取，避免 Reflection 重复读取同一批文件。
     """
     repo_path = state.get("repo_id", ".")
     changed_files = state.get("changed_files", [])
-    cache: dict[str, str] = {}
 
     if hook := state.get("_log_hook"):
         hook(step="collect_context", level="info",
              message=f"正在收集文件上下文 ({len(state.get('changed_files', []))} 个文件)...")
 
-    # 尝试 CRG 爆炸半径分析
-    if _try_crg_context(state, repo_path, changed_files, cache):
-        state["crg_enabled"] = True
-        state["file_context_cache"] = cache
+    # 只在第一轮建立候选文件集合；后续 Reflection 只读取下一批。
+    if not state.get("context_initialized"):
+        state["context_initialized"] = True
+        if _try_crg_context(state, repo_path, changed_files):
+            state["crg_enabled"] = True
+        else:
+            state["crg_enabled"] = False
+            state["context_candidates"] = list(dict.fromkeys(changed_files))
 
-        source = "CRG" if state.get("crg_enabled") else "Normal"
-        if hook := state.get("_log_hook"):
-            hook(step="collect_context", level="info",
-                 message=f"已收集 {len(cache)} 个文件 ({source})")
+    candidates = state.get("context_candidates", changed_files)
+    cache = dict(state.get("file_context_cache", {}))
+    round_number = state.get("context_round", 0)
+    batch_size = max(1, settings.context_files_per_round)
+    start = round_number * batch_size
+    batch = candidates[start:start + batch_size]
 
-        return state
-
-    # 降级：逐文件读取
-    state["crg_enabled"] = False
-    for file_path in changed_files[:20]:
+    for file_path in batch:
+        if file_path in cache:
+            continue
         full_path = Path(repo_path) / file_path
-        content = read_file(str(full_path), start_line=1, max_lines=200)
-        cache[file_path] = content
+        cache[file_path] = read_file(str(full_path), start_line=1, max_lines=200)
+
+    state["context_round"] = round_number + 1
     state["file_context_cache"] = cache
+
+    # CRG 的结构性影响在上下文收集完成后才可用，作为硬触发器补入计划。
+    impact = state.get("impact_radius")
+    if impact and (
+        impact.get("impacted_nodes", 0) > 20
+        or impact.get("changed_nodes", 0) > 5
+    ):
+        if "security_reviewer" not in state.get("review_plan", []):
+            state.setdefault("review_plan", []).append("security_reviewer")
 
     source = "CRG" if state.get("crg_enabled") else "Normal"
     if hook := state.get("_log_hook"):
-        hook(step="collect_context", level="info",
-             message=f"已收集 {len(cache)} 个文件 ({source})")
+        hook(
+            step="collect_context",
+            level="info",
+            message=(
+                f"已收集 {len(cache)} 个文件 ({source})，"
+                f"本轮新增 {len([p for p in batch if p in cache])} 个"
+            ),
+        )
 
     return state
 
 
 def _try_crg_context(
-    state: ReviewState, repo_path: str, changed_files: list[str], cache: dict[str, str]
+    state: ReviewState, repo_path: str, changed_files: list[str]
 ) -> bool:
     """Try CRG blast-radius analysis. Returns True on success, False on any failure."""
     try:
@@ -184,21 +210,7 @@ def _try_crg_context(
 
         ctx = result.get("context", {})
         impacted_files = ctx.get("impacted_files", [])
-        source_snippets = ctx.get("source_snippets", {})
-
-        # 填充缓存：优先用 CRG 返回的源码片段，缺失的补读
-        for fp in impacted_files[:20]:
-            if fp in source_snippets:
-                cache[fp] = source_snippets[fp]
-            else:
-                full_path = Path(repo_path) / fp
-                cache[fp] = read_file(str(full_path), start_line=1, max_lines=200)
-
-        # 确保原始变更文件也在缓存中
-        for fp in changed_files:
-            if fp not in cache:
-                full_path = Path(repo_path) / fp
-                cache[fp] = read_file(str(full_path), start_line=1, max_lines=200)
+        state["context_candidates"] = list(dict.fromkeys(changed_files + impacted_files))
 
         state["impact_radius"] = {
             "changed_nodes": len(ctx.get("changed_nodes", [])),
@@ -215,12 +227,6 @@ def _try_crg_context(
 
 def _run_reviews_node(state: ReviewState) -> ReviewState:
     """Node 4: 并行执行所有 Reviewer，收集 Findings。"""
-    context = ReviewerContext(
-        diff=state.get("raw_diff", ""),
-        changed_files=state.get("changed_files", []),
-        file_context=state.get("file_context_cache", {}),
-    )
-
     all_findings = []
     for reviewer_name in state.get("review_plan", []):
         reviewer = REVIEWER_REGISTRY.get(reviewer_name)
@@ -229,6 +235,18 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                 if hook := state.get("_log_hook"):
                     hook(step="run_reviews", level="info",
                          message=f"正在执行 {reviewer_name}...")
+                context = ReviewerContext(
+                    diff=state.get("raw_diff", ""),
+                    changed_files=state.get("changed_files", []),
+                    file_context=select_reviewer_context(
+                        state.get("file_context_cache", {}),
+                        state.get("changed_files", []),
+                        reviewer_name,
+                    ),
+                    repo_root=state.get("repo_id", "."),
+                    revision=state.get("snapshot_revision", ""),
+                    log_hook=state.get("_log_hook"),
+                )
                 findings = reviewer.review(context)
                 all_findings.extend(findings)
             except Exception as e:
@@ -260,11 +278,18 @@ def _reflection_node(state: ReviewState) -> ReviewState:
     max_rounds = settings.max_reflection_rounds
 
     findings = state.get("findings", [])
-    has_line_refs = any(f.get("line", 0) > 0 for f in findings)
+    has_line_refs = any(f.get("line", 0) > 0 and f.get("file") for f in findings)
+    candidates = state.get("context_candidates", [])
+    loaded = state.get("file_context_cache", {})
+    has_unread_candidates = any(path not in loaded for path in candidates)
 
     if state["reflection_round"] >= max_rounds:
         state["need_more_context"] = False
-    elif not has_line_refs and state["reflection_round"] < max_rounds:
+    elif (
+        not has_line_refs
+        and has_unread_candidates
+        and state["reflection_round"] < max_rounds
+    ):
         state["need_more_context"] = True
     else:
         state["need_more_context"] = False
@@ -342,9 +367,9 @@ def _build_graph() -> StateGraph:
     builder.add_node("generate_report", _generate_report_node)
 
     builder.set_entry_point("load_pr")
-    builder.add_edge("load_pr", "collect_context")
-    builder.add_edge("collect_context", "planning")
-    builder.add_edge("planning", "run_reviews")
+    builder.add_edge("load_pr", "planning")
+    builder.add_edge("planning", "collect_context")
+    builder.add_edge("collect_context", "run_reviews")
     builder.add_edge("run_reviews", "reflection")
 
     builder.add_conditional_edges(
@@ -373,26 +398,42 @@ def run_workflow(
     log_hook: Callable | None = None,
 ) -> dict:
     """运行审查 Workflow，返回报告 dict。"""
-    initial_state: ReviewState = {
-        "repo_id": repo_path,
-        "git_url": git_url,
-        "review_type": review_type,
-        "pr_number": pr_number,
-        "commit_hash": commit_hash,
-        "base_branch": base_branch,
-        "raw_diff": "",
-        "changed_files": [],
+    snapshot = create_review_snapshot(
+        repo_path,
+        git_url=git_url,
+        review_type=review_type,
+        pr_number=pr_number,
+        commit_hash=commit_hash,
+        base_branch=base_branch,
+    )
+    try:
+        initial_state: ReviewState = {
+            "repo_id": snapshot.repo_root,
+            "git_url": git_url,
+            "review_type": review_type,
+            "pr_number": pr_number,
+            "commit_hash": commit_hash,
+            "base_branch": base_branch,
+            "raw_diff": snapshot.raw_diff,
+            "changed_files": snapshot.changed_files,
+            "snapshot_revision": snapshot.revision,
+            "snapshot_base_revision": snapshot.base_revision,
         "review_plan": [],
-        "file_context_cache": {},
-        "findings": [],
-        "reflection_round": 0,
-        "need_more_context": False,
-        "summary": "",
-        "risk_level": "low",
-        "crg_enabled": True,
-        "impact_radius": None,
-        "_log_hook": log_hook,
-    }
+        "context_candidates": [],
+        "context_round": 0,
+        "context_initialized": False,
+            "file_context_cache": {},
+            "findings": [],
+            "reflection_round": 0,
+            "need_more_context": False,
+            "summary": "",
+            "risk_level": "low",
+            "crg_enabled": True,
+            "impact_radius": None,
+            "_log_hook": log_hook,
+        }
 
-    final_state = _graph.invoke(initial_state)
-    return final_state.get("report", {})
+        final_state = _graph.invoke(initial_state)
+        return final_state.get("report", {})
+    finally:
+        snapshot.cleanup()
