@@ -40,6 +40,11 @@ export default function FindingCard({
               <Icon className="h-3 w-3" />
               {config.label}
             </Badge>
+            {finding.evidence_type === "reviewer_context" && (
+              <Badge variant="outline" className="text-muted-foreground">
+                修改附近
+              </Badge>
+            )}
             <span className="font-mono text-sm text-foreground/80 truncate">
               {finding.file}
               <span className="text-muted-foreground text-xs ml-1">

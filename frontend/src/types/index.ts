@@ -31,6 +31,7 @@ export interface Finding {
   title: string;
   reason: string;
   suggestion: string;
+  evidence_type?: "reviewer" | "reviewer_context" | "static_check" | "tool_verified" | string;
 }
 
 export interface ReviewReport {
@@ -84,6 +85,7 @@ export interface ReviewQualityMetrics {
   candidate_findings: number;
   accepted_findings: number;
   filtered_findings: number;
+  truncated_outputs?: number;
   located_findings: number;
   static_evidence_findings: number;
   reviewer_context_findings: number;

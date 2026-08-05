@@ -112,7 +112,7 @@ def filter_findings(
         elif evidence_type != "static_check":
             file_lines = changed_lines.get(file_path)
             context_line = bool(file_lines and line not in file_lines)
-            # Finding 仍定位在当前变更文件，只是落在关联上下文行。
+            # Finding 仍定位在当前修改文件，只是落在具体修改行附近。
             # 保留它并明确标记，交给报告使用者复核，避免静默丢失。
         else:
             context_line = False

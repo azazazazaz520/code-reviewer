@@ -18,6 +18,23 @@ from app.engine.errors import format_user_error
 router = APIRouter(prefix="/api", tags=["reviews"])
 
 
+def _normalise_report_checks(checks: list[dict], quality: dict) -> list[dict]:
+    """将历史报告中的内部校验术语转换成面向用户的提示。"""
+    normalised = []
+    for check in checks:
+        item = dict(check)
+        if item.get("name") == "finding_context":
+            count = quality.get("reviewer_context_findings", 0)
+            item["message"] = (
+                f"{count} 个问题出现在修改文件的相邻代码中，请确认是否由本次提交引起。"
+            )
+        elif item.get("name") == "finding_gate":
+            count = quality.get("filtered_findings", 0)
+            item["message"] = f"{count} 条候选意见未达到证据要求，未计入最终结果。"
+        normalised.append(item)
+    return normalised
+
+
 @router.post(
     "/repos/{repo_id}/reviews", response_model=ReviewTaskResponse, status_code=201
 )
@@ -151,6 +168,7 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
     stats = json.loads(report.stats_json)
     checks = stats.pop("checks", [])
     quality = stats.pop("quality", {})
+    checks = _normalise_report_checks(checks, quality)
     reviewer_outputs = stats.pop("reviewer_outputs", {})
     changes = stats.pop("changes", {})
     review_status = stats.pop("review_status", None)
@@ -162,8 +180,9 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
         )
 
     summary = report.summary
-    if review_status == "degraded" and "未完整覆盖" not in summary:
-        summary += "；审查未完整覆盖，请查看校验摘要"
+    legacy_suffix = "；审查未完整覆盖，请查看校验摘要"
+    if summary.endswith(legacy_suffix):
+        summary = summary[: -len(legacy_suffix)]
 
     return ReviewReportResponse(
         review_id=task.id,

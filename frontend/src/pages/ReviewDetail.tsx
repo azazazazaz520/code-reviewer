@@ -280,10 +280,25 @@ export default function ReviewDetail() {
   );
   const riskConfig = getSeverityConfig(report.risk_level);
   const RiskIcon = riskConfig.icon;
-  const isDegraded = report.review_status === "degraded";
   const attentionChecks = (report.checks ?? []).filter(
     (check) => check.status !== "pass",
   );
+  const blockingChecks = attentionChecks.filter(
+    (check) =>
+      check.status === "error" ||
+      check.status === "fail" ||
+      check.name.startsWith("reviewer_"),
+  );
+  const diagnosticChecks = attentionChecks.filter(
+    (check) =>
+      !blockingChecks.includes(check) &&
+      check.name !== "finding_context" &&
+      check.name !== "finding_gate",
+  );
+  const contextFindingCount = report.quality?.reviewer_context_findings ?? 0;
+  const filteredFindingCount = report.quality?.filtered_findings ?? 0;
+  const diagnosticCount =
+    diagnosticChecks.length + contextFindingCount + filteredFindingCount;
   const reviewerOutputs = Object.entries(report.reviewer_outputs ?? {});
 
   const allFindings = report.findings;
@@ -324,40 +339,24 @@ export default function ReviewDetail() {
 
       {/* Risk level header */}
       <div
-        className={`rounded-lg border p-4 ${
-          isDegraded
-            ? "border-severity-medium/40 bg-severity-medium/10"
-            : riskBannerClass[report.risk_level] ?? "bg-card"
-        }`}
+        className={`rounded-lg border p-4 ${riskBannerClass[report.risk_level] ?? "bg-card"}`}
       >
-        <Badge variant={isDegraded ? "medium" : riskVariantMap[report.risk_level]}>
-          {isDegraded ? (
-            "审查不完整"
-          ) : (
-            <>
-              <RiskIcon className="h-3.5 w-3.5" />
-              {report.risk_level.toUpperCase()}
-            </>
-          )}
+        <Badge variant={riskVariantMap[report.risk_level]}>
+          <RiskIcon className="h-3.5 w-3.5" />
+          {report.risk_level.toUpperCase()}
         </Badge>
         <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
 
       <ChangeDiffViewer changes={report.changes} />
 
-      {attentionChecks.length > 0 && (
-        <div className="rounded-lg border bg-card p-4">
-          <h3 className="text-sm font-medium mb-2">校验摘要</h3>
+      {blockingChecks.length > 0 && (
+        <div role="alert" className="rounded-lg border border-destructive/30 bg-destructive/5 p-4">
+          <h3 className="text-sm font-medium mb-2">需要关注</h3>
           <div className="space-y-2 text-sm">
-            {attentionChecks.map((check) => (
+            {blockingChecks.map((check) => (
               <div key={check.name} className="flex items-start gap-2">
-                <span
-                  className={`mt-1 h-2 w-2 shrink-0 rounded-full ${
-                    check.status === "error" || check.status === "fail"
-                      ? "bg-destructive"
-                      : "bg-severity-medium"
-                  }`}
-                />
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-destructive" />
                 <div>
                   <div className="font-medium">{formatReviewerName(check.name.replace(/^reviewer_/, ""))}</div>
                   <div className="text-muted-foreground">{formatErrorMessage(check.message)}</div>
@@ -366,6 +365,36 @@ export default function ReviewDetail() {
             ))}
           </div>
         </div>
+      )}
+
+      {diagnosticCount > 0 && (
+        <details className="rounded-lg border bg-card">
+          <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-sm font-medium">
+            <span>审查诊断</span>
+            <span className="text-xs font-normal text-muted-foreground">{diagnosticCount} 项需复核</span>
+          </summary>
+          <div className="space-y-2 border-t px-4 py-3 text-sm">
+            {contextFindingCount > 0 && (
+              <p className="text-muted-foreground">
+                {contextFindingCount} 条意见出现在修改文件的相邻代码中，请确认是否由本次提交引起。
+              </p>
+            )}
+            {filteredFindingCount > 0 && (
+              <p className="text-muted-foreground">
+                {filteredFindingCount} 条候选意见未通过证据门槛，未计入最终结果。
+              </p>
+            )}
+            {diagnosticChecks.map((check) => (
+              <div key={check.name} className="flex items-start gap-2 text-muted-foreground">
+                <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-severity-medium" />
+                <div>
+                  <div className="font-medium text-foreground">{formatReviewerName(check.name.replace(/^reviewer_/, ""))}</div>
+                  <div>{formatErrorMessage(check.message)}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       {reviewerOutputs.length > 0 && (
