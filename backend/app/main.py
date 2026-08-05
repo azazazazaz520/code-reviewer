@@ -15,6 +15,7 @@ import app.models.repo  # noqa: F401
 from app.api.repos import router as repos_router
 from app.api.reviews import router as reviews_router
 from app.api.stats import router as stats_router
+from app.api.prompts import router as prompts_router
 from app.services.review_runner import ReviewTaskRunner
 
 
@@ -55,6 +56,7 @@ app.add_middleware(
 app.include_router(repos_router)
 app.include_router(reviews_router)
 app.include_router(stats_router)
+app.include_router(prompts_router)
 
 
 @app.get("/api/health")

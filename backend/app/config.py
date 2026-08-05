@@ -11,6 +11,15 @@ class Settings(BaseSettings):
     review_worker_poll_seconds: float = 1.0
     context_files_per_round: int = 20
 
+    # 提示词工作区
+    prompt_timeout_seconds: int = 60
+    prompt_min_input_chars: int = 20
+    prompt_max_input_chars: int = 12000
+    prompt_max_output_tokens: int = 3000
+    prompt_session_ttl_seconds: int = 1800
+    prompt_session_max_count: int = 100
+    prompt_session_max_context_chars: int = 24000
+
     # LLM
     llm_provider: str = "deepseek"
     llm_model: str = "deepseek-chat"

@@ -29,6 +29,8 @@ class LLMProvider:
         messages: list[dict],
         tools: list[dict] | None = None,
         response_format: dict | None = None,
+        timeout_seconds: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict:
         """单次 LLM 调用，返回完整响应。
 
@@ -39,7 +41,7 @@ class LLMProvider:
             model=self.model,
             messages=messages,
             temperature=self.temperature,
-            max_tokens=self.max_tokens,
+            max_tokens=max_tokens or self.max_tokens,
         )
         if tools:
             kwargs["tools"] = tools
@@ -47,7 +49,10 @@ class LLMProvider:
         if response_format:
             kwargs["response_format"] = response_format
 
-        response = self.client.chat.completions.create(**kwargs)
+        client = self.client
+        if timeout_seconds is not None:
+            client = client.with_options(timeout=timeout_seconds)
+        response = client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         message = choice.message
         usage = getattr(response, "usage", None)
