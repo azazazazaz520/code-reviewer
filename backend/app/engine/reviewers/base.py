@@ -29,6 +29,8 @@ class ReviewerContext:
     revision: str = ""
     log_hook: Callable | None = None
     output_hook: Callable[[str, str], None] | None = None
+    output_metadata_hook: Callable[[str, dict], None] | None = None
+    last_output_metadata: dict = field(default_factory=dict)
 
 
 class BaseReviewer(ABC):
@@ -109,17 +111,37 @@ class BaseReviewer(ABC):
         messages = self._build_messages(context)
         tools = self.get_tool_schemas()
         handlers = self._build_tool_handlers()
+        output_metadata: dict = {}
+
+        def capture_metadata(metadata: dict) -> None:
+            if isinstance(metadata, dict):
+                output_metadata.update(metadata)
 
         if tools and handlers:
             output = self.llm.chat_with_tools(
-                messages, tools, handlers, log_hook=context.log_hook
+                messages,
+                tools,
+                handlers,
+                log_hook=context.log_hook,
+                response_meta_hook=capture_metadata,
             )
         else:
             result = self.llm.chat(messages)
             output = result.get("content", "")
+            if isinstance(result, dict):
+                output_metadata.update(
+                    {
+                        key: result[key]
+                        for key in ("finish_reason", "usage")
+                        if result.get(key) is not None
+                    }
+                )
 
+        context.last_output_metadata = output_metadata
         if context.output_hook:
             context.output_hook("primary", output if isinstance(output, str) else "")
+        if context.output_metadata_hook:
+            context.output_metadata_hook("primary", output_metadata)
         return output if isinstance(output, str) else ""
 
     def _parse_findings(
@@ -159,6 +181,8 @@ class BaseReviewer(ABC):
                     return None
                 parsed = parsed["findings"]
             if isinstance(parsed, list):
+                if not all(isinstance(finding, dict) for finding in parsed):
+                    return None
                 return normalise(parsed)
             return None
 
@@ -183,9 +207,17 @@ class BaseReviewer(ABC):
                 while start != -1:
                     try:
                         parsed, _ = decoder.raw_decode(candidate[start:])
+                        findings_wrapper = False
                         if isinstance(parsed, dict) and "findings" in parsed:
                             parsed = parsed["findings"]
+                            findings_wrapper = True
                         if isinstance(parsed, list):
+                            if not findings_wrapper and not parsed:
+                                start = candidate.find(marker, start + 1)
+                                continue
+                            if not all(isinstance(finding, dict) for finding in parsed):
+                                start = candidate.find(marker, start + 1)
+                                continue
                             return normalise(parsed)
                     except json.JSONDecodeError:
                         pass
@@ -202,6 +234,10 @@ class BaseReviewer(ABC):
     ) -> list[dict]:
         """解析 Finding；模型只破坏格式时，额外请求一次 JSON 修复。"""
         try:
+            if context.last_output_metadata.get("finish_reason") == "length":
+                raise ReviewerOutputError(
+                    f"{self.name} output was truncated before complete Finding JSON"
+                )
             return self._parse_findings(
                 llm_output,
                 fallback_file="",
@@ -246,6 +282,15 @@ class BaseReviewer(ABC):
                     context.output_hook(
                         "format_repair",
                         repaired_output if isinstance(repaired_output, str) else "",
+                    )
+                if context.output_metadata_hook:
+                    context.output_metadata_hook(
+                        "format_repair",
+                        {
+                            key: repaired[key]
+                            for key in ("finish_reason", "usage")
+                            if isinstance(repaired, dict) and repaired.get(key) is not None
+                        },
                     )
                 repaired_findings = self._parse_findings(
                     repaired_output if isinstance(repaired_output, str) else "",

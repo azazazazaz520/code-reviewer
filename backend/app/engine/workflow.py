@@ -286,6 +286,21 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                     }
                 )
 
+            def capture_output_metadata(stage: str, metadata: dict) -> None:
+                if not isinstance(metadata, dict):
+                    return
+                for attempt in reversed(trace["attempts"]):
+                    if attempt.get("stage") != stage:
+                        continue
+                    finish_reason = metadata.get("finish_reason")
+                    if finish_reason is not None:
+                        attempt["finish_reason"] = finish_reason
+                    if metadata.get("usage"):
+                        attempt["usage"] = metadata["usage"]
+                    if finish_reason == "length":
+                        attempt["truncated"] = True
+                    break
+
             try:
                 if hook := state.get("_log_hook"):
                     hook(step="run_reviews", level="info",
@@ -302,6 +317,7 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                     revision=state.get("snapshot_revision", ""),
                     log_hook=state.get("_log_hook"),
                     output_hook=capture_output,
+                    output_metadata_hook=capture_output_metadata,
                 )
                 findings = reviewer.review(context)
                 trace["candidate_findings"] = findings
@@ -350,6 +366,11 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
         "located_findings": sum(finding.get("line", 0) > 0 for finding in accepted_findings),
         "static_evidence_findings": evidence_count,
         "reviewer_context_findings": context_finding_count,
+        "truncated_outputs": sum(
+            attempt.get("truncated", False)
+            for trace in reviewer_outputs.values()
+            for attempt in trace.get("attempts", [])
+        ),
     }
     filtered_count = state["quality_metrics"]["filtered_findings"]
     if filtered_count:
@@ -359,7 +380,7 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                 "status": "warning",
                 "message": (
                     f"{filtered_count} 个候选 Finding 未通过证据门槛，"
-                    "本次审查结果未完整覆盖。"
+                    "未计入最终结果。"
                 ),
             }
         )
@@ -369,8 +390,8 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                 "name": "finding_context",
                 "status": "warning",
                 "message": (
-                    f"{context_finding_count} 个 Finding 位于变更文件的关联上下文行，"
-                    "请复核其与本次提交的直接关系。"
+                    f"{context_finding_count} 个问题出现在修改文件的相邻代码中，"
+                    "请确认是否由本次提交引起。"
                 ),
             }
         )
@@ -453,17 +474,13 @@ def _generate_report_node(state: ReviewState) -> ReviewState:
         "degraded"
         if (
             state.get("workflow_errors")
-            or quality.get("filtered_findings", 0) > 0
-            or quality.get("reviewer_context_findings", 0) > 0
+            or quality.get("truncated_outputs", 0) > 0
         )
         else "complete"
     )
     summary = f"本次审查发现 {total} 个问题"
     if high_count > 0:
         summary += f"（{high_count} 个高危）"
-    if review_status == "degraded":
-        summary += "；审查未完整覆盖，请查看校验摘要"
-
     state["summary"] = summary
     state["risk_level"] = risk
     state["review_status"] = review_status

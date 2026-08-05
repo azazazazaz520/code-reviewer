@@ -48,19 +48,76 @@ class LLMProvider:
             kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(**kwargs)
-        choice = response.choices[0].message
+        choice = response.choices[0]
+        message = choice.message
+        usage = getattr(response, "usage", None)
+        usage_data = {
+            key: getattr(usage, key)
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if usage is not None and getattr(usage, key, None) is not None
+        }
 
         return {
-            "content": choice.content,
+            "content": message.content,
             "tool_calls": [
                 {
                     "id": tc.id,
                     "name": tc.function.name,
                     "arguments": json.loads(tc.function.arguments),
                 }
-                for tc in (choice.tool_calls or [])
+                for tc in (message.tool_calls or [])
             ],
+            "finish_reason": choice.finish_reason,
+            "usage": usage_data,
         }
+
+    def _finalize_json(
+        self,
+        messages: list[dict],
+        response_meta_hook: Callable[[dict], None] | None = None,
+    ) -> str:
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "请基于以上所有工具调用结果完成审查。只返回 JSON 对象，根节点必须包含 findings 数组，"
+                    "例如 {\"findings\":[]}。如果没有满足报告门槛的问题，findings 才能为空；"
+                    "不要输出 Markdown、解释文字或代码围栏。"
+                ),
+            }
+        )
+        json_format = {"type": "json_object"}
+
+        def notify(result: dict) -> None:
+            if response_meta_hook:
+                response_meta_hook(
+                    {
+                        key: result[key]
+                        for key in ("finish_reason", "usage")
+                        if result.get(key) is not None
+                    }
+                )
+
+        final = self.chat(messages, response_format=json_format)
+        notify(final)
+        content = final.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "上一条响应为空。请立即只输出 JSON 对象，格式必须是"
+                    "{\"findings\":[...]}；只有确实没有问题时才能返回空 findings，"
+                    "不要输出解释、Markdown 或代码围栏。"
+                ),
+            }
+        )
+        retry = self.chat(messages, response_format=json_format)
+        notify(retry)
+        retry_content = retry.get("content")
+        return retry_content if isinstance(retry_content, str) else ""
 
     def chat_with_tools(
         self,
@@ -69,6 +126,7 @@ class LLMProvider:
         tool_handlers: dict[str, callable],
         max_rounds: int = 3,
         log_hook: Callable | None = None,
+        response_meta_hook: Callable[[dict], None] | None = None,
     ) -> str:
         """LLM 调用 + 自动执行 tool_calls 循环。
 
@@ -79,9 +137,20 @@ class LLMProvider:
 
         for _ in range(max_rounds):
             result = self.chat(msgs, tools=tools)
+            if response_meta_hook:
+                response_meta_hook(
+                    {
+                        key: result[key]
+                        for key in ("finish_reason", "usage")
+                        if result.get(key) is not None
+                    }
+                )
 
             if result["content"] and not result["tool_calls"]:
-                return result["content"]
+                # 工具调用结束后的第一段 content 可能是分析过程，不能直接
+                # 作为最终审查结果返回；统一走结构化 JSON 收口请求。
+                msgs.append({"role": "assistant", "content": result["content"]})
+                return self._finalize_json(msgs, response_meta_hook)
 
             if result["tool_calls"]:
                 msgs.append({
@@ -150,6 +219,14 @@ class LLMProvider:
         msgs.append(final_prompt)
         json_format = {"type": "json_object"}
         final = self.chat(msgs, response_format=json_format)
+        if response_meta_hook:
+            response_meta_hook(
+                {
+                    key: final[key]
+                    for key in ("finish_reason", "usage")
+                    if final.get(key) is not None
+                }
+            )
         content = final.get("content")
         if isinstance(content, str) and content.strip():
             return content
@@ -168,6 +245,14 @@ class LLMProvider:
             }
         )
         retry = self.chat(msgs, response_format=json_format)
+        if response_meta_hook:
+            response_meta_hook(
+                {
+                    key: retry[key]
+                    for key in ("finish_reason", "usage")
+                    if retry.get(key) is not None
+                }
+            )
         retry_content = retry.get("content")
         return retry_content if isinstance(retry_content, str) else ""
 

@@ -81,6 +81,7 @@ class FindingSchema(BaseModel):
     title: str
     reason: str
     suggestion: str
+    evidence_type: str = "reviewer"
 
 
 class ReviewStats(BaseModel):
@@ -100,6 +101,7 @@ class ReviewQualityMetrics(BaseModel):
     candidate_findings: int = 0
     accepted_findings: int = 0
     filtered_findings: int = 0
+    truncated_outputs: int = 0
     located_findings: int = 0
     static_evidence_findings: int = 0
     reviewer_context_findings: int = 0
@@ -109,6 +111,8 @@ class ReviewerOutputAttempt(BaseModel):
     stage: str
     output: str
     truncated: bool = False
+    finish_reason: str | None = None
+    usage: dict[str, int] = Field(default_factory=dict)
 
 
 class ReviewerOutputTrace(BaseModel):

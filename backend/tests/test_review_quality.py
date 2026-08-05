@@ -266,13 +266,36 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(report_state["findings"], [])
         self.assertTrue(report_state["report"])
         self.assertEqual(report_state["report"]["review_status"], "degraded")
-        self.assertIn("未完整覆盖", report_state["report"]["summary"])
-        self.assertEqual(report_state["checks"][0]["status"], "error")
-        self.assertEqual(report_state["checks"][0]["name"], "reviewer_style_reviewer")
+        self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
+
+    def test_context_findings_do_not_make_report_degraded(self):
+        state = {
+            "findings": [],
+            "workflow_errors": [],
+            "quality_metrics": {
+                "candidate_findings": 2,
+                "accepted_findings": 2,
+                "filtered_findings": 0,
+                "reviewer_context_findings": 2,
+                "truncated_outputs": 0,
+            },
+            "checks": [],
+        }
+
+        report_state = _generate_report_node(state)
+
+        self.assertEqual(report_state["report"]["review_status"], "complete")
+        self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
 
     def test_invalid_reviewer_json_is_not_silently_treated_as_clean_review(self):
         with self.assertRaises(ReviewerOutputError):
             StyleReviewer()._parse_findings("这不是 JSON")
+
+    def test_embedded_scalar_array_is_not_treated_as_empty_findings(self):
+        with self.assertRaises(ReviewerOutputError):
+            StyleReviewer()._parse_findings(
+                'analysis: `"".split("-")` returns [""]。Actually,'
+            )
 
     def test_reviewer_parser_accepts_common_json_wrappers(self):
         reviewer = StyleReviewer()
@@ -294,7 +317,7 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(findings[0]["severity"], "low")
         self.assertEqual(findings[0]["line"], 1)
 
-    def test_filtered_candidates_make_report_degraded(self):
+    def test_filtered_candidates_do_not_make_report_degraded(self):
         state = {
             "findings": [],
             "workflow_errors": [],
@@ -308,8 +331,41 @@ class ReviewQualityTests(unittest.TestCase):
 
         report_state = _generate_report_node(state)
 
-        self.assertEqual(report_state["report"]["review_status"], "degraded")
-        self.assertIn("未完整覆盖", report_state["report"]["summary"])
+        self.assertEqual(report_state["report"]["review_status"], "complete")
+        self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
+
+    def test_tool_call_review_always_closes_with_structured_json(self):
+        provider = object.__new__(LLMProvider)
+        calls = []
+        responses = iter(
+            [
+                {
+                    "content": "分析过程很长，但这不是最终结果。",
+                    "tool_calls": [],
+                    "finish_reason": "stop",
+                },
+                {
+                    "content": '{"findings":[]}',
+                    "tool_calls": [],
+                    "finish_reason": "stop",
+                },
+            ]
+        )
+
+        def fake_chat(messages, **kwargs):
+            calls.append({"messages": messages, "kwargs": kwargs})
+            return next(responses)
+
+        provider.chat = fake_chat
+        result = provider.chat_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={},
+        )
+
+        self.assertEqual(result, '{"findings":[]}')
+        self.assertEqual(calls[1]["kwargs"]["response_format"], {"type": "json_object"})
+        self.assertIn("分析过程很长", calls[1]["messages"][-2]["content"])
 
     def test_tool_call_review_recovers_from_empty_forced_final_response(self):
         provider = object.__new__(LLMProvider)
@@ -382,6 +438,67 @@ class ReviewQualityTests(unittest.TestCase):
 
         with self.assertRaises(ReviewerOutputError):
             reviewer.review(ReviewerContext(diff="diff"))
+
+    def test_truncated_reviewer_output_is_not_treated_as_clean_review(self):
+        class TruncatedLLM:
+            def chat_with_tools(self, *args, **kwargs):
+                callback = kwargs.get("response_meta_hook")
+                if callback:
+                    callback({"finish_reason": "length"})
+                return 'analysis: `"".split("-")` returns [""]。Actually,'
+
+            def chat(self, _messages, **_kwargs):
+                return {
+                    "content": '{"findings":[]}',
+                    "tool_calls": [],
+                    "finish_reason": "stop",
+                }
+
+        reviewer = StyleReviewer()
+        reviewer._llm = TruncatedLLM()
+
+        with self.assertRaises(ReviewerOutputError):
+            reviewer.review(ReviewerContext(diff="diff"))
+
+    def test_truncated_reviewer_trace_is_degraded(self):
+        class TruncatedReviewer:
+            def review(self, context):
+                context.output_hook("primary", 'analysis [""]。Actually,')
+                context.output_metadata_hook("primary", {"finish_reason": "length"})
+                raise ReviewerOutputError("output was truncated")
+
+        state = {
+            "review_plan": ["style_reviewer"],
+            "validator_findings": [],
+            "checks": [],
+            "workflow_errors": [],
+            "reviewer_outputs": {},
+            "changed_files": ["src/app.py"],
+            "raw_diff": "@@ -1,0 +1,1 @@\n+value = 1\n",
+            "findings": [],
+            "quality_metrics": {},
+            "reflection_round": 0,
+            "context_candidates": [],
+            "file_context_cache": {},
+            "_log_hook": None,
+        }
+
+        import app.engine.workflow as workflow
+
+        original_registry = workflow.REVIEWER_REGISTRY
+        workflow.REVIEWER_REGISTRY = {"style_reviewer": TruncatedReviewer()}
+        try:
+            _run_reviews_node(state)
+        finally:
+            workflow.REVIEWER_REGISTRY = original_registry
+
+        report_state = _generate_report_node(_reflection_node(state))
+
+        attempt = state["reviewer_outputs"]["style_reviewer"]["attempts"][0]
+        self.assertEqual(attempt["finish_reason"], "length")
+        self.assertTrue(attempt["truncated"])
+        self.assertEqual(state["quality_metrics"]["truncated_outputs"], 1)
+        self.assertEqual(report_state["report"]["review_status"], "degraded")
 
     def test_reviewer_captures_primary_output_for_report_trace(self):
         class TracedLLM:
