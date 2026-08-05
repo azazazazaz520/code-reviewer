@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Loader2, ChevronDown } from "lucide-react";
 import type { ReviewLog } from "../types";
+import { formatErrorMessage } from "../lib/error-message";
 
 const stepLabels: Record<string, string> = {
   load_pr: "获取代码变更",
@@ -89,6 +90,11 @@ export default function ReviewProgress({
       {showLogs && (
         <CardContent>
           <div className="max-h-[400px] overflow-auto font-mono text-[13px] leading-[1.8]">
+            {logs.length === 0 && (
+              <div className="py-4 font-sans text-sm text-muted-foreground">
+                审查任务已提交，正在等待执行日志...
+              </div>
+            )}
             {hiddenCount > 0 && !expanded && (
               <div className="mb-2">
                 <Button
@@ -121,7 +127,7 @@ export default function ReviewProgress({
                     [{stepLabels[log.step] || log.step}]
                   </span>
                 )}{" "}
-                {log.message}
+                {log.level === "error" ? formatErrorMessage(log.message) : log.message}
               </div>
             ))}
 

@@ -53,6 +53,4 @@ class SecurityReviewer(BaseReviewer):
 
     def review(self, context: ReviewerContext) -> list[dict]:
         llm_output = self._call_llm(context)
-        return self._parse_findings(
-            llm_output, fallback_file="", log_hook=context.log_hook
-        )
+        return self._parse_findings_with_repair(llm_output, context)

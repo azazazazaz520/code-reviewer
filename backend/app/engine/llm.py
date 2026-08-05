@@ -28,6 +28,7 @@ class LLMProvider:
         self,
         messages: list[dict],
         tools: list[dict] | None = None,
+        response_format: dict | None = None,
     ) -> dict:
         """单次 LLM 调用，返回完整响应。
 
@@ -43,6 +44,8 @@ class LLMProvider:
         if tools:
             kwargs["tools"] = tools
             kwargs["tool_choice"] = "auto"
+        if response_format:
+            kwargs["response_format"] = response_format
 
         response = self.client.chat.completions.create(**kwargs)
         choice = response.choices[0].message
@@ -136,15 +139,37 @@ class LLMProvider:
         # 超过 max_rounds，强制要求 LLM 输出最终结果。
         # 这里必须重复机器可解析的输出契约，否则模型容易返回 Markdown 说明，
         # 让 Reviewer 看起来像“没有问题”，实际却没有完成审查。
-        msgs.append({
+        final_prompt = {
             "role": "user",
             "content": (
-                "请基于以上所有工具调用结果完成审查。只返回符合系统要求的 JSON 数组；"
-                "如果没有满足报告门槛的问题，严格返回 []；不要输出 Markdown、解释文字或代码围栏。"
+                "请基于以上所有工具调用结果完成审查。只返回 JSON 对象，根节点必须包含 findings 数组，"
+                "例如 {\"findings\":[]}。如果没有满足报告门槛的问题，findings 才能为空；"
+                "不要输出 Markdown、解释文字或代码围栏。"
             ),
-        })
-        final = self.chat(msgs)
-        return final.get("content", "")
+        }
+        msgs.append(final_prompt)
+        json_format = {"type": "json_object"}
+        final = self.chat(msgs, response_format=json_format)
+        content = final.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+
+        # 某些模型在工具调用达到上限后会返回空 content。再发一次短请求，
+        # 避免把一次瞬时的空响应直接升级为审查失败；若仍为空，调用方仍会
+        # 按原有逻辑报告解析错误，不会被误判为“没有问题”。
+        msgs.append(
+            {
+                "role": "user",
+                "content": (
+                    "上一条响应为空。请立即只输出 JSON 对象，格式必须是"
+                    "{\"findings\":[...]}；只有确实没有问题时才能返回空 findings，"
+                    "不要输出解释、Markdown 或代码围栏。"
+                ),
+            }
+        )
+        retry = self.chat(msgs, response_format=json_format)
+        retry_content = retry.get("content")
+        return retry_content if isinstance(retry_content, str) else ""
 
 
 # 全局单例

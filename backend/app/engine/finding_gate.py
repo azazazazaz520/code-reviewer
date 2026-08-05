@@ -108,10 +108,14 @@ def filter_findings(
             # 必须定位到具体变更行，避免报告无法复核的主观意见。
             if evidence_type != "static_check":
                 continue
+            context_line = False
         elif evidence_type != "static_check":
             file_lines = changed_lines.get(file_path)
-            if file_lines and line not in file_lines:
-                continue
+            context_line = bool(file_lines and line not in file_lines)
+            # Finding 仍定位在当前变更文件，只是落在关联上下文行。
+            # 保留它并明确标记，交给报告使用者复核，避免静默丢失。
+        else:
+            context_line = False
 
         key = (file_path, line, str(finding["title"]).strip())
         if key in seen:
@@ -120,6 +124,8 @@ def filter_findings(
 
         accepted_finding = dict(finding)
         accepted_finding["file"] = file_path
+        if context_line:
+            accepted_finding["evidence_type"] = "reviewer_context"
         accepted.append(accepted_finding)
 
     return accepted

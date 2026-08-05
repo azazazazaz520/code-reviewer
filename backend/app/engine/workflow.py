@@ -22,6 +22,7 @@ from app.engine.tools.read_file import read_file
 from app.engine.snapshot import create_review_snapshot
 from app.engine.context import select_reviewer_context
 from app.engine.finding_gate import filter_findings
+from app.engine.errors import format_user_error
 from app.engine.scope import build_review_plan, classify_files
 from app.engine.validators.release import validate_release_manifest
 
@@ -32,7 +33,7 @@ from app.engine.validators.release import validate_release_manifest
 def _load_pr_node(state: ReviewState) -> ReviewState:
     """Node 1: 加载 PR diff 和变更文件列表。
 
-    PR 模式：从 GitHub API 获取 PR diff。
+    PR 模式：从 GitHub 或 Gitee API 获取 PR diff。
     Local 模式：从本地 git 获取 diff。
     """
     # run_workflow 已经准备好不可变快照时，不再从工作区重新获取输入。
@@ -59,7 +60,7 @@ def _load_pr_node(state: ReviewState) -> ReviewState:
              message=f"正在获取代码变更... (type={review_type})")
 
     if review_type == "pr" and pr_number and git_url:
-        # PR 模式：GitHub API
+        # PR 模式：GitHub/Gitee API
         diff_text = get_pr_diff(git_url, pr_number)
         files_text = get_pr_changed_files(git_url, pr_number)
         if diff_text.startswith("Error:") or files_text.startswith("Error:"):
@@ -265,9 +266,26 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
     """Node 4: 并行执行所有 Reviewer，收集 Findings。"""
     all_findings = list(state.get("validator_findings", []))
     workflow_errors = list(state.get("workflow_errors", []))
+    reviewer_outputs = dict(state.get("reviewer_outputs", {}))
     for reviewer_name in state.get("review_plan", []):
         reviewer = REVIEWER_REGISTRY.get(reviewer_name)
         if reviewer:
+            trace = {
+                "attempts": [],
+                "candidate_findings": [],
+                "error_message": None,
+            }
+
+            def capture_output(stage: str, output: str) -> None:
+                max_chars = 20000
+                trace["attempts"].append(
+                    {
+                        "stage": stage,
+                        "output": output[:max_chars],
+                        "truncated": len(output) > max_chars,
+                    }
+                )
+
             try:
                 if hook := state.get("_log_hook"):
                     hook(step="run_reviews", level="info",
@@ -283,20 +301,26 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
                     repo_root=state.get("repo_id", "."),
                     revision=state.get("snapshot_revision", ""),
                     log_hook=state.get("_log_hook"),
+                    output_hook=capture_output,
                 )
                 findings = reviewer.review(context)
+                trace["candidate_findings"] = findings
                 all_findings.extend(findings)
             except Exception as e:
-                error = {"reviewer": reviewer_name, "message": str(e)}
+                user_message = format_user_error(e)
+                error = {"reviewer": reviewer_name, "message": user_message}
                 workflow_errors.append(error)
+                trace["error_message"] = user_message
                 if hook := state.get("_log_hook"):
                     hook(
                         step="run_reviews",
                         level="error",
-                        message=f"{reviewer_name} 执行失败: {e}",
+                        message=f"{reviewer_name} 执行失败：{user_message}",
                     )
+            reviewer_outputs[reviewer_name] = trace
 
     state["workflow_errors"] = workflow_errors
+    state["reviewer_outputs"] = reviewer_outputs
     state["checks"] = list(state.get("checks", []))
     for error in workflow_errors:
         state["checks"].append(
@@ -311,6 +335,10 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
         state.get("changed_files", []),
         state.get("raw_diff", ""),
     )
+    context_finding_count = sum(
+        finding.get("evidence_type") == "reviewer_context"
+        for finding in accepted_findings
+    )
     evidence_count = sum(
         finding.get("evidence_type") in {"static_check", "tool_verified"}
         for finding in accepted_findings
@@ -321,7 +349,31 @@ def _run_reviews_node(state: ReviewState) -> ReviewState:
         "filtered_findings": len(all_findings) - len(accepted_findings),
         "located_findings": sum(finding.get("line", 0) > 0 for finding in accepted_findings),
         "static_evidence_findings": evidence_count,
+        "reviewer_context_findings": context_finding_count,
     }
+    filtered_count = state["quality_metrics"]["filtered_findings"]
+    if filtered_count:
+        state["checks"].append(
+            {
+                "name": "finding_gate",
+                "status": "warning",
+                "message": (
+                    f"{filtered_count} 个候选 Finding 未通过证据门槛，"
+                    "本次审查结果未完整覆盖。"
+                ),
+            }
+        )
+    if context_finding_count:
+        state["checks"].append(
+            {
+                "name": "finding_context",
+                "status": "warning",
+                "message": (
+                    f"{context_finding_count} 个 Finding 位于变更文件的关联上下文行，"
+                    "请复核其与本次提交的直接关系。"
+                ),
+            }
+        )
     state["findings"] = accepted_findings
     return state
 
@@ -396,7 +448,16 @@ def _generate_report_node(state: ReviewState) -> ReviewState:
 
     total = len(findings)
     high_count = severity_count.get("high", 0)
-    review_status = "degraded" if state.get("workflow_errors") else "complete"
+    quality = state.get("quality_metrics", {})
+    review_status = (
+        "degraded"
+        if (
+            state.get("workflow_errors")
+            or quality.get("filtered_findings", 0) > 0
+            or quality.get("reviewer_context_findings", 0) > 0
+        )
+        else "complete"
+    )
     summary = f"本次审查发现 {total} 个问题"
     if high_count > 0:
         summary += f"（{high_count} 个高危）"
@@ -415,6 +476,18 @@ def _generate_report_node(state: ReviewState) -> ReviewState:
         "findings": findings,
         "checks": state.get("checks", []),
         "quality": state.get("quality_metrics", {}),
+        "reviewer_outputs": state.get("reviewer_outputs", {}),
+        "changes": {
+            "review_type": state.get("review_type", ""),
+            "pr_number": state.get("pr_number"),
+            "commit_hash": state.get("commit_hash"),
+            "branch": state.get("branch"),
+            "base_branch": state.get("base_branch"),
+            "base_revision": state.get("snapshot_base_revision"),
+            "head_revision": state.get("snapshot_revision"),
+            "changed_files": state.get("changed_files", []),
+            "diff": state.get("raw_diff", ""),
+        },
         "stats": {
             "total_findings": total,
             "by_severity": severity_count,
@@ -468,6 +541,7 @@ def run_workflow(
     review_type: str = "pr",
     pr_number: int | None = None,
     commit_hash: str | None = None,
+    branch: str | None = None,
     base_branch: str | None = None,
     log_hook: Callable | None = None,
 ) -> dict:
@@ -478,6 +552,7 @@ def run_workflow(
         review_type=review_type,
         pr_number=pr_number,
         commit_hash=commit_hash,
+        branch=branch,
         base_branch=base_branch,
     )
     try:
@@ -487,6 +562,7 @@ def run_workflow(
             "review_type": review_type,
             "pr_number": pr_number,
             "commit_hash": commit_hash,
+            "branch": branch,
             "base_branch": base_branch,
             "raw_diff": snapshot.raw_diff,
             "changed_files": snapshot.changed_files,
@@ -500,6 +576,7 @@ def run_workflow(
             "checks": [],
             "workflow_errors": [],
             "quality_metrics": {},
+            "reviewer_outputs": {},
             "change_scopes": {},
             "file_context_cache": {},
             "findings": [],

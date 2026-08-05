@@ -9,8 +9,9 @@ class ReviewState(TypedDict, total=False):
     review_type: str  # "pr" | "local"
     pr_number: int | None
     commit_hash: str | None
+    branch: str | None
     base_branch: str | None
-    git_url: str  # GitHub 仓库 URL（PR 模式用）
+    git_url: str  # GitHub/Gitee 仓库 URL（PR 模式用）
 
     # Diff 和变更文件
     raw_diff: str
@@ -27,6 +28,7 @@ class ReviewState(TypedDict, total=False):
     checks: list[dict]
     workflow_errors: list[dict]
     quality_metrics: dict
+    reviewer_outputs: dict[str, dict]
 
     # 审查计划
     review_plan: list[str]  # ["security_reviewer", "style_reviewer", ...]

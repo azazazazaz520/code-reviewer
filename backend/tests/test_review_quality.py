@@ -5,7 +5,9 @@ import unittest
 from pathlib import Path
 
 from app.engine.finding_gate import filter_findings
-from app.engine.reviewers.base import ReviewerOutputError
+from app.engine.errors import format_user_error
+from app.engine.llm import LLMProvider
+from app.engine.reviewers.base import ReviewerContext, ReviewerOutputError
 from app.engine.reviewers.style import StyleReviewer
 from app.engine.scope import build_review_plan, classify_files
 from app.engine.validators.release import validate_release_manifest
@@ -18,6 +20,53 @@ from app.engine.workflow import run_workflow
 
 
 class ReviewQualityTests(unittest.TestCase):
+    def test_insufficient_balance_error_is_user_friendly(self):
+        raw = "Error code: 402 - {'error': {'message': 'Insufficient Balance', 'type': 'unknown_error'}}"
+
+        self.assertEqual(
+            format_user_error(raw),
+            "模型服务余额不足，请补充余额或更换模型服务后重试。",
+        )
+
+    def test_reviewer_balance_error_is_normalised_in_report_state(self):
+        class BalanceReviewer:
+            def review(self, _context):
+                raise RuntimeError(
+                    "Error code: 402 - {'error': {'message': 'Insufficient Balance'}}"
+                )
+
+        state = {
+            "review_plan": ["style_reviewer"],
+            "validator_findings": [],
+            "checks": [],
+            "workflow_errors": [],
+            "reviewer_outputs": {},
+            "changed_files": ["src/app.py"],
+            "raw_diff": "@@ -1,0 +1,1 @@\n+value = 1\n",
+            "findings": [],
+            "quality_metrics": {},
+            "file_context_cache": {},
+            "_log_hook": None,
+        }
+
+        import app.engine.workflow as workflow
+
+        original_registry = workflow.REVIEWER_REGISTRY
+        workflow.REVIEWER_REGISTRY = {"style_reviewer": BalanceReviewer()}
+        try:
+            _run_reviews_node(state)
+        finally:
+            workflow.REVIEWER_REGISTRY = original_registry
+
+        self.assertEqual(
+            state["checks"][0]["message"],
+            "模型服务余额不足，请补充余额或更换模型服务后重试。",
+        )
+        self.assertEqual(
+            state["reviewer_outputs"]["style_reviewer"]["error_message"],
+            "模型服务余额不足，请补充余额或更换模型服务后重试。",
+        )
+
     def test_release_manifest_does_not_activate_generic_reviewers(self):
         scopes = classify_files(["update/windows.json"])
 
@@ -58,6 +107,8 @@ class ReviewQualityTests(unittest.TestCase):
 
     def test_finding_gate_rejects_uncertain_unlocated_and_unrelated_findings(self):
         diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
 @@ -1,2 +1,3 @@
 +value = 1
  value += 1
@@ -93,6 +144,28 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(len(accepted), 1)
         self.assertEqual(accepted[0]["title"], "存在具体问题")
+
+    def test_finding_gate_keeps_changed_file_context_findings_for_review(self):
+        diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
++value = 1
+ value += 1
+"""
+        finding = {
+            "severity": "low",
+            "file": "src/app.py",
+            "line": 2,
+            "title": "变更文件中的上下文问题",
+            "reason": "问题位于变更文件的关联上下文中。",
+            "suggestion": "复核该处与变更的关系。",
+        }
+
+        accepted = filter_findings([finding], ["src/app.py"], diff)
+
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(accepted[0]["evidence_type"], "reviewer_context")
 
     def test_release_only_commit_produces_checks_without_llm_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -155,6 +228,9 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(report["quality"]["candidate_findings"], 0)
         self.assertEqual(report["quality"]["filtered_findings"], 0)
         self.assertTrue(any(check["name"] == "release_artifact_sha256" for check in report["checks"]))
+        self.assertEqual(report["changes"]["changed_files"], ["update/windows.json"])
+        self.assertEqual(report["changes"]["head_revision"], commit)
+        self.assertIn("windows.json", report["changes"]["diff"])
 
     def test_invalid_reviewer_output_is_visible_without_blocking_report(self):
         class BrokenReviewer:
@@ -206,6 +282,145 @@ class ReviewQualityTests(unittest.TestCase):
             reviewer._parse_findings("审查结果：{\"findings\": []}"),
             [],
         )
+
+    def test_reviewer_parser_normalises_json_scalar_types(self):
+        reviewer = StyleReviewer()
+
+        findings = reviewer._parse_findings(
+            '{"findings":[{"severity":"LOW","file":"src/app.py",'
+            '"line":"1","title":"标题","reason":"原因","suggestion":"建议"}]}'
+        )
+
+        self.assertEqual(findings[0]["severity"], "low")
+        self.assertEqual(findings[0]["line"], 1)
+
+    def test_filtered_candidates_make_report_degraded(self):
+        state = {
+            "findings": [],
+            "workflow_errors": [],
+            "quality_metrics": {
+                "candidate_findings": 3,
+                "accepted_findings": 0,
+                "filtered_findings": 3,
+            },
+            "checks": [],
+        }
+
+        report_state = _generate_report_node(state)
+
+        self.assertEqual(report_state["report"]["review_status"], "degraded")
+        self.assertIn("未完整覆盖", report_state["report"]["summary"])
+
+    def test_tool_call_review_recovers_from_empty_forced_final_response(self):
+        provider = object.__new__(LLMProvider)
+        responses = iter(
+            [
+                {
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "name": "ReadFile",
+                            "arguments": {"file_path": "src/app.py"},
+                        }
+                    ],
+                },
+                {"content": None, "tool_calls": []},
+                {"content": "[]", "tool_calls": []},
+            ]
+        )
+
+        def fake_chat(_messages, tools=None, **_kwargs):
+            return next(responses)
+
+        provider.chat = fake_chat
+        result = provider.chat_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={"ReadFile": lambda **_: "content"},
+            max_rounds=1,
+        )
+
+        self.assertEqual(result, "[]")
+
+    def test_reviewer_repairs_non_json_model_output_before_failing(self):
+        class RepairingLLM:
+            def __init__(self):
+                self.repair_messages = []
+
+            def chat_with_tools(self, *_args, **_kwargs):
+                return "审查结果：```json\n[{'severity': 'low'}]\n```"
+
+            def chat(self, messages, **_kwargs):
+                self.repair_messages.append(messages)
+                return {
+                    "content": (
+                        '{"findings":[{"severity":"low","file":"src/app.py",'
+                        '"line":1,"title":"示例","reason":"原因","suggestion":"建议"}]}'
+                    ),
+                    "tool_calls": [],
+                }
+
+        reviewer = StyleReviewer()
+        reviewer._llm = RepairingLLM()
+
+        findings = reviewer.review(ReviewerContext(diff="diff"))
+
+        self.assertEqual(findings[0]["file"], "src/app.py")
+        self.assertEqual(len(reviewer._llm.repair_messages), 1)
+
+    def test_reviewer_does_not_turn_unverifiable_output_into_clean_review(self):
+        class EmptyRepairLLM:
+            def chat_with_tools(self, *_args, **_kwargs):
+                return "模型分析被截断，无法确认结果"
+
+            def chat(self, _messages, **_kwargs):
+                return {"content": '{"findings":[]}', "tool_calls": []}
+
+        reviewer = StyleReviewer()
+        reviewer._llm = EmptyRepairLLM()
+
+        with self.assertRaises(ReviewerOutputError):
+            reviewer.review(ReviewerContext(diff="diff"))
+
+    def test_reviewer_captures_primary_output_for_report_trace(self):
+        class TracedLLM:
+            def chat_with_tools(self, *_args, **_kwargs):
+                return '{"findings":[]}'
+
+        outputs = []
+        reviewer = StyleReviewer()
+        reviewer._llm = TracedLLM()
+
+        reviewer.review(
+            ReviewerContext(
+                diff="diff",
+                output_hook=lambda stage, output: outputs.append((stage, output)),
+            )
+        )
+
+        self.assertEqual(outputs, [("primary", '{"findings":[]}')])
+
+    def test_report_preserves_reviewer_output_trace(self):
+        state = {
+            "findings": [],
+            "workflow_errors": [],
+            "quality_metrics": {},
+            "checks": [],
+            "reviewer_outputs": {
+                "style_reviewer": {
+                    "attempts": [
+                        {"stage": "primary", "output": "{\"findings\":[]}", "truncated": False}
+                    ],
+                    "candidate_findings": [],
+                    "error_message": None,
+                }
+            },
+        }
+
+        report_state = _generate_report_node(state)
+
+        self.assertIn("style_reviewer", report_state["report"]["reviewer_outputs"])
 
     @staticmethod
     def _git(repo: Path, *args: str) -> str:
