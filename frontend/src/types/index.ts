@@ -3,7 +3,6 @@ export interface Repo {
   name: string;
   git_url: string;
   local_path?: string;  // backend auto-fills, not shown/edited in UI
-  default_branch: string;
   created_at: string;
 }
 
@@ -14,6 +13,7 @@ export interface ReviewTask {
   review_type: "pr" | "local";
   pr_number: number | null;
   commit_hash: string | null;
+  branch: string | null;
   base_branch: string | null;
   status: "pending" | "running" | "done" | "failed";
   risk_level?: string | null;
@@ -21,6 +21,7 @@ export interface ReviewTask {
   reflection_rounds: number;
   created_at: string;
   completed_at: string | null;
+  archived_at: string | null;
 }
 
 export interface Finding {
@@ -39,6 +40,8 @@ export interface ReviewReport {
   findings: Finding[];
   checks?: ReviewCheck[];
   quality?: ReviewQualityMetrics;
+  reviewer_outputs?: Record<string, ReviewerOutputTrace>;
+  changes: ReviewChanges;
   stats: {
     total_findings: number;
     by_severity: Record<string, number>;
@@ -47,10 +50,34 @@ export interface ReviewReport {
   };
 }
 
+export interface ReviewChanges {
+  review_type: "pr" | "local" | string;
+  pr_number: number | null;
+  commit_hash: string | null;
+  branch: string | null;
+  base_branch: string | null;
+  base_revision: string | null;
+  head_revision: string | null;
+  changed_files: string[];
+  diff: string;
+}
+
 export interface ReviewCheck {
   name: string;
   status: "pass" | "fail" | "unverified" | "error" | string;
   message: string;
+}
+
+export interface ReviewerOutputAttempt {
+  stage: string;
+  output: string;
+  truncated: boolean;
+}
+
+export interface ReviewerOutputTrace {
+  attempts: ReviewerOutputAttempt[];
+  candidate_findings: Finding[];
+  error_message: string | null;
 }
 
 export interface ReviewQualityMetrics {
@@ -59,6 +86,7 @@ export interface ReviewQualityMetrics {
   filtered_findings: number;
   located_findings: number;
   static_evidence_findings: number;
+  reviewer_context_findings: number;
 }
 
 export interface ReviewReportResponse {
@@ -110,6 +138,10 @@ export interface CommitItem {
   message: string;
   author: string;
   date: string;
+}
+
+export interface BranchItem {
+  name: string;
 }
 
 export interface ReviewLog {

@@ -61,6 +61,45 @@ class ReviewSnapshotTest(unittest.TestCase):
 
             self.assertFalse(worktree.exists())
 
+    def test_local_branch_selects_branch_tip_when_commit_is_omitted(self):
+        with TemporaryDirectory(prefix="snapshot-branch-test-") as temp_dir:
+            repo = Path(temp_dir)
+
+            def git(*args: str) -> str:
+                result = subprocess.run(
+                    ["git", *args],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return result.stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "test@example.com")
+            git("config", "user.name", "Snapshot Test")
+            (repo / "demo.txt").write_text("main\n", encoding="utf-8")
+            git("add", "demo.txt")
+            git("commit", "-qm", "initial")
+            git("switch", "-c", "feature/review")
+            (repo / "demo.txt").write_text("feature\n", encoding="utf-8")
+            git("add", "demo.txt")
+            git("commit", "-qm", "feature change")
+
+            snapshot = create_review_snapshot(
+                str(repo), review_type="local", branch="feature/review"
+            )
+            worktree = Path(snapshot.repo_root)
+            try:
+                self.assertEqual(
+                    (worktree / "demo.txt").read_text(encoding="utf-8"), "feature\n"
+                )
+                self.assertIn("feature", snapshot.raw_diff)
+            finally:
+                snapshot.cleanup()
+
+            self.assertFalse(worktree.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

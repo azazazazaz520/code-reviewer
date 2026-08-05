@@ -15,7 +15,6 @@ class Repo(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     git_url: Mapped[str] = mapped_column(String(500), nullable=False)
     local_path: Mapped[str] = mapped_column(String(500), nullable=False)
-    default_branch: Mapped[str] = mapped_column(String(100), default="main")
     created_at: Mapped[datetime] = mapped_column(
         UTCDateTime, default=lambda: datetime.now(UTC)
     )
@@ -37,6 +36,7 @@ class ReviewTask(Base):
     review_type: Mapped[str] = mapped_column(String(20), nullable=False)  # pr / local
     pr_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
     commit_hash: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    branch: Mapped[str | None] = mapped_column(String(200), nullable=True)
     base_branch: Mapped[str | None] = mapped_column(String(100), nullable=True)
     status: Mapped[str] = mapped_column(
         String(20), default="pending"
@@ -47,6 +47,7 @@ class ReviewTask(Base):
         UTCDateTime, default=lambda: datetime.now(UTC)
     )
     completed_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
 
     repo: Mapped["Repo"] = relationship(back_populates="reviews")
     report: Mapped["ReviewReport | None"] = relationship(

@@ -1,18 +1,17 @@
-import re
 import shutil
 import subprocess
 import uuid as uuid_mod
 import os
 from pathlib import Path
 
-import requests
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.base import get_db
 from app.models.repo import Repo
-from app.models.schemas import PRItem, CommitItem, RepoCreate, RepoResponse
+from app.models.schemas import BranchItem, PRItem, CommitItem, RepoCreate, RepoResponse
+from app.services.git_host import GitHostError, get_open_pulls, parse_git_repository
 
 router = APIRouter(prefix="/api/repos", tags=["repos"])
 
@@ -29,18 +28,17 @@ def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
     clone_dir = Path(settings.repos_dir) / repo_uuid
     clone_dir.mkdir(parents=True, exist_ok=True)
 
-    # 构造 clone URL（私有仓库注入 GitHub token）
+    # 构造 clone URL（私有 GitHub/Gitee 仓库注入对应 token）
     clone_url = body.git_url
-    if settings.github_token and "github.com" in clone_url:
-        # 将 https://github.com/... 变成 https://<token>@github.com/...
-        clone_url = clone_url.replace(
-            "https://github.com/", f"https://{settings.github_token}@github.com/"
-        )
+    try:
+        clone_url = parse_git_repository(body.git_url).clone_url(body.git_url)
+    except GitHostError:
+        # 保持本地/其他 Git 远程地址的原有 clone 能力；仅 PR API 需要受支持的平台。
+        pass
 
     # 执行 clone
     result = subprocess.run(
-        ["git", "clone", "--single-branch",
-         "--branch", body.default_branch, clone_url, str(clone_dir)],
+        ["git", "clone", clone_url, str(clone_dir)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -58,7 +56,6 @@ def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
         name=body.name,
         git_url=body.git_url,
         local_path=str(clone_dir.resolve()),
-        default_branch=body.default_branch,
     )
     db.add(repo)
     db.commit()
@@ -92,67 +89,105 @@ def update_repo(repo_id: str, body: RepoCreate, db: Session = Depends(get_db)):
     repo.git_url = body.git_url
     if body.local_path is not None:
         repo.local_path = body.local_path
-    repo.default_branch = body.default_branch
     db.commit()
     db.refresh(repo)
     return repo
 
 
-@router.get("/{repo_id}/prs", response_model=list[PRItem])
-def list_prs(repo_id: str, db: Session = Depends(get_db)):
-    """获取仓库的 Open PR 列表（通过 GitHub API）。"""
+@router.get("/{repo_id}/branches", response_model=list[BranchItem])
+def list_branches(repo_id: str, db: Session = Depends(get_db)):
+    """获取本地 clone 中可用于审查的分支。"""
     repo = db.query(Repo).filter(Repo.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="仓库不存在")
 
-    if not settings.github_token:
-        raise HTTPException(status_code=400, detail="未配置 GitHub Token，无法获取 PR 列表")
+    if not os.path.isdir(repo.local_path):
+        raise HTTPException(status_code=400, detail=f"本地路径不存在: {repo.local_path}")
 
-    # 从 git_url 解析 owner/repo
-    # 支持格式: https://github.com/owner/repo.git 或 git@github.com:owner/repo.git
-    match = re.search(r"github\.com[/:](.+?)/(.+?)(?:\.git)?$", repo.git_url)
-    if not match:
-        raise HTTPException(status_code=400, detail="无法从 git_url 解析 GitHub owner/repo")
-
-    owner, repo_name = match.group(1), match.group(2)
+    fetch_error: str | None = None
+    try:
+        fetch_result = subprocess.run(
+            ["git", "-C", repo.local_path, "fetch", "--all", "--prune"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+        )
+        if fetch_result.returncode != 0:
+            fetch_error = (fetch_result.stderr or "").strip()
+    except subprocess.TimeoutExpired:
+        fetch_error = "git fetch 执行超时"
 
     try:
-        resp = requests.get(
-            f"https://api.github.com/repos/{owner}/{repo_name}/pulls",
-            params={"state": "open", "per_page": 20, "sort": "updated", "direction": "desc"},
-            headers={
-                "Authorization": f"Bearer {settings.github_token}",
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=15,
+        result = subprocess.run(
+            [
+                "git",
+                "-C",
+                repo.local_path,
+                "for-each-ref",
+                "--format=%(refname:short)",
+                "refs/heads",
+                "refs/remotes/origin",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
         )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=500, detail="读取分支列表超时")
 
-        if resp.status_code == 403 and "rate limit" in resp.text.lower():
-            raise HTTPException(status_code=429, detail="GitHub API 限流，请稍后重试或手动输入 PR 号")
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        raise HTTPException(status_code=500, detail=f"读取分支列表失败: {stderr}")
 
-        if resp.status_code == 401:
-            raise HTTPException(status_code=400, detail="GitHub Token 无效")
+    branches: list[str] = []
+    for raw_name in result.stdout.splitlines():
+        name = raw_name.strip()
+        if not name or name.endswith("/HEAD"):
+            continue
+        if name.startswith("origin/"):
+            name = name.removeprefix("origin/")
+        if name not in branches:
+            branches.append(name)
 
-        resp.raise_for_status()
-        pulls = resp.json()
+    if not branches and fetch_error:
+        raise HTTPException(status_code=502, detail=f"无法同步仓库分支: {fetch_error}")
+
+    return [BranchItem(name=name) for name in sorted(branches)]
+
+
+@router.get("/{repo_id}/prs", response_model=list[PRItem])
+def list_prs(repo_id: str, db: Session = Depends(get_db)):
+    """获取仓库的 Open PR 列表（通过 GitHub 或 Gitee API）。"""
+    repo = db.query(Repo).filter(Repo.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+
+    try:
+        pulls = get_open_pulls(repo.git_url)
 
         return [
             PRItem(
                 number=p["number"],
                 title=p["title"],
-                author=p["user"]["login"] if p.get("user") else "unknown",
-                branch=p["head"]["ref"],
+                author=(p.get("user") or {}).get("login") or (p.get("user") or {}).get("name") or "unknown",
+                branch=((p.get("head") or {}).get("ref") or (p.get("head") or {}).get("label") or "unknown"),
                 created_at=p["created_at"],
             )
             for p in pulls
         ]
-    except (requests.RequestException, ValueError) as e:
-        raise HTTPException(status_code=502, detail=f"GitHub API 请求失败: {str(e)}")
+    except GitHostError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/{repo_id}/commits", response_model=list[CommitItem])
-def list_commits(repo_id: str, limit: int = 20, db: Session = Depends(get_db)):
+def list_commits(
+    repo_id: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    branch: str | None = Query(default=None, max_length=200),
+    db: Session = Depends(get_db),
+):
     """获取仓库本地最近 N 条 commit（通过 git log）。"""
     repo = db.query(Repo).filter(Repo.id == repo_id).first()
     if not repo:
@@ -166,8 +201,18 @@ def list_commits(repo_id: str, limit: int = 20, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=f"本地路径不存在: {local_path}")
 
     try:
+        ref = _resolve_branch_ref(local_path, branch) if branch else "HEAD"
         result = subprocess.run(
-            ["git", "-C", local_path, "log", f"-{limit}", "--format=%H%x00%s%x00%an%x00%aI"],
+            [
+                "git",
+                "-C",
+                local_path,
+                "log",
+                ref,
+                f"-{limit}",
+                "--format=%H%x00%s%x00%an%x00%aI",
+                "--",
+            ],
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -175,6 +220,8 @@ def list_commits(repo_id: str, limit: int = 20, db: Session = Depends(get_db)):
         )
         if result.returncode != 0:
             stderr = (result.stderr or "").strip()
+            if branch:
+                raise HTTPException(status_code=400, detail=f"分支不存在或不可用: {branch}")
             raise HTTPException(status_code=500, detail=f"git log 执行失败: {stderr}")
 
         commits: list[CommitItem] = []
@@ -196,3 +243,19 @@ def list_commits(repo_id: str, limit: int = 20, db: Session = Depends(get_db)):
         return commits
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=500, detail="git log 执行超时")
+
+
+def _resolve_branch_ref(local_path: str, branch: str) -> str:
+    """将 UI 展示的分支名解析为本地或 origin 远端 ref。"""
+    candidates = [branch] if branch.startswith("origin/") else [branch, f"origin/{branch}"]
+    for candidate in candidates:
+        result = subprocess.run(
+            ["git", "-C", local_path, "rev-parse", "--verify", f"{candidate}^{{commit}}"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=10,
+        )
+        if result.returncode == 0:
+            return candidate
+    raise HTTPException(status_code=400, detail=f"分支不存在或不可用: {branch}")

@@ -22,6 +22,9 @@ class Settings(BaseSettings):
     # GitHub
     github_token: str = ""
 
+    # Gitee
+    gitee_token: str = ""
+
     # CRG
     crg_enabled: bool = True
 

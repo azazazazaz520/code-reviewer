@@ -6,14 +6,13 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 import tempfile
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from app.services.git_host import GitHostError, get_pull, parse_git_repository, pull_sha
 
 
 class SnapshotError(RuntimeError):
@@ -50,12 +49,13 @@ def create_review_snapshot(
     review_type: str = "local",
     pr_number: int | None = None,
     commit_hash: str | None = None,
+    branch: str | None = None,
     base_branch: str | None = None,
 ) -> ReviewSnapshot:
     """准备 PR 或 Local 审查快照。
 
-    PR 使用 GitHub 返回的 base/head SHA；Local 使用指定 commit，未指定时使用
-    HEAD。两者都会创建临时 worktree，调用方必须在 workflow 完成后 cleanup。
+    PR 使用 GitHub/Gitee 返回的 base/head SHA；Local 使用指定 commit，未指定时使用
+    HEAD 或指定 branch。两者都会创建临时 worktree，调用方必须在 workflow 完成后 cleanup。
     """
     source_repo = _repository_root(repo_path)
 
@@ -71,7 +71,7 @@ def create_review_snapshot(
         base_revision = _fetch_revision(source_repo, metadata["base_sha"])
         diff_range = (base_revision, revision, "...")
     else:
-        revision = _resolve_revision(source_repo, commit_hash or "HEAD")
+        revision = _resolve_revision(source_repo, commit_hash or branch or "HEAD")
         base_ref = base_branch or f"{revision}^"
         base_revision = _resolve_revision(source_repo, base_ref)
         diff_range = (base_revision, revision, "")
@@ -160,44 +160,14 @@ def _run_git(repo_path: str, args: list[str], timeout: int = 60) -> str:
 
 def _get_pr_metadata(git_url: str, pr_number: int) -> dict[str, str]:
     try:
-        from app.config import settings
-        github_token = settings.github_token
-    except ImportError:
-        # Local snapshot tests and Local Review 不需要配置系统。
-        github_token = ""
-
-    owner, repo = _parse_owner_repo(git_url)
-    url = f"https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}"
-    headers = {
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "code-reviewer",
-    }
-    if github_token:
-        headers["Authorization"] = f"Bearer {github_token}"
-
-    try:
-        request = urllib.request.Request(url, headers=headers)
-        with urllib.request.urlopen(request, timeout=30) as response:
-            payload = json.loads(response.read().decode("utf-8", errors="replace"))
-    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError) as exc:
-        raise SnapshotError(f"无法获取 GitHub PR 元数据: {exc}") from exc
-
+        provider = parse_git_repository(git_url)
+        payload = get_pull(git_url, pr_number)
+    except GitHostError as exc:
+        raise SnapshotError(str(exc)) from exc
     try:
         return {
-            "head_sha": payload["head"]["sha"],
-            "base_sha": payload["base"]["sha"],
+            "head_sha": pull_sha(payload, "head"),
+            "base_sha": pull_sha(payload, "base"),
         }
-    except (KeyError, TypeError) as exc:
-        raise SnapshotError("GitHub PR 元数据缺少 head.sha 或 base.sha") from exc
-
-
-def _parse_owner_repo(git_url: str) -> tuple[str, str]:
-    value = git_url.rstrip("/")
-    if value.startswith("git@github.com:"):
-        value = value.removeprefix("git@github.com:")
-    else:
-        value = value.rsplit("github.com/", maxsplit=1)[-1]
-    parts = value.removesuffix(".git").split("/")
-    if len(parts) != 2 or not all(parts):
-        raise SnapshotError(f"无法从 git_url 解析 GitHub 仓库: {git_url}")
-    return parts[0], parts[1]
+    except GitHostError as exc:
+        raise SnapshotError(f"{provider.label} PR 元数据缺少 base/head 提交") from exc

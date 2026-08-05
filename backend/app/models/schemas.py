@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +11,6 @@ class RepoCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=255)
     git_url: str = Field(..., min_length=1, max_length=500)
     local_path: str | None = Field(default=None, max_length=500)
-    default_branch: str = Field(default="main", max_length=100)
 
 
 class RepoResponse(BaseModel):
@@ -18,7 +18,6 @@ class RepoResponse(BaseModel):
     name: str
     git_url: str
     local_path: str
-    default_branch: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -35,6 +34,7 @@ class ReviewCreate(BaseModel):
     review_type: ReviewType
     pr_number: int | None = None
     commit_hash: str | None = None
+    branch: str | None = Field(default=None, max_length=200)
     base_branch: str | None = None
 
 
@@ -45,6 +45,7 @@ class ReviewTaskResponse(BaseModel):
     review_type: str
     pr_number: int | None = None
     commit_hash: str | None = None
+    branch: str | None = None
     base_branch: str | None = None
     status: str
     risk_level: str | None = None  # 从 review_reports JOIN 获取
@@ -52,6 +53,7 @@ class ReviewTaskResponse(BaseModel):
     reflection_rounds: int
     created_at: datetime
     completed_at: datetime | None = None
+    archived_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
@@ -100,12 +102,37 @@ class ReviewQualityMetrics(BaseModel):
     filtered_findings: int = 0
     located_findings: int = 0
     static_evidence_findings: int = 0
+    reviewer_context_findings: int = 0
+
+
+class ReviewerOutputAttempt(BaseModel):
+    stage: str
+    output: str
+    truncated: bool = False
+
+
+class ReviewerOutputTrace(BaseModel):
+    attempts: list[ReviewerOutputAttempt] = Field(default_factory=list)
+    candidate_findings: list[dict[str, Any]] = Field(default_factory=list)
+    error_message: str | None = None
 
 
 class ReviewReportResponse(BaseModel):
     review_id: str
     status: str
     report: "ReportContent | None" = None
+
+
+class ReviewChanges(BaseModel):
+    review_type: str = ""
+    pr_number: int | None = None
+    commit_hash: str | None = None
+    branch: str | None = None
+    base_branch: str | None = None
+    base_revision: str | None = None
+    head_revision: str | None = None
+    changed_files: list[str] = Field(default_factory=list)
+    diff: str = ""
 
 
 class ReportContent(BaseModel):
@@ -116,6 +143,8 @@ class ReportContent(BaseModel):
     review_status: str = "complete"
     checks: list[ReviewCheck] = Field(default_factory=list)
     quality: ReviewQualityMetrics = Field(default_factory=ReviewQualityMetrics)
+    reviewer_outputs: dict[str, ReviewerOutputTrace] = Field(default_factory=dict)
+    changes: ReviewChanges = Field(default_factory=ReviewChanges)
 
 
 # ─── 统计 ──────────────────────────────────────────
@@ -175,6 +204,10 @@ class CommitItem(BaseModel):
     message: str
     author: str
     date: str  # ISO 8601 字符串
+
+
+class BranchItem(BaseModel):
+    name: str
 
 
 # ─── 审查日志 ──────────────────────────────────────────

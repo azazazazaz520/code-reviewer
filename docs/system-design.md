@@ -119,7 +119,6 @@ E:\code-reviewer\
 | name | VARCHAR(255) | 仓库名 |
 | git_url | VARCHAR(500) | 远程地址 |
 | local_path | VARCHAR(500) | 本地路径 |
-| default_branch | VARCHAR(100) | 默认 "main" |
 | created_at | DATETIME | |
 
 ### review_tasks 表
@@ -131,6 +130,7 @@ E:\code-reviewer\
 | review_type | VARCHAR(20) | "pr" / "local" |
 | pr_number | INT NULL | GitHub PR 场景 |
 | commit_hash | VARCHAR(40) NULL | local 场景 |
+| branch | VARCHAR(200) NULL | local 场景 |
 | base_branch | VARCHAR(100) NULL | PR 场景 |
 | status | VARCHAR(20) | pending / running / done / failed |
 | reflection_rounds | INT DEFAULT 0 | Reflection 循环次数 |
