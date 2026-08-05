@@ -222,3 +222,9 @@ backend/data/code_reviewer.db
 .code-review-graph/
 
 .codegraph/
+
+# Electron desktop artifacts
+desktop/node_modules/
+desktop/dist/
+desktop/release/
+desktop/resources/backend/

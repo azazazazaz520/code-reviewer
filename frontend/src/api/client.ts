@@ -5,4 +5,10 @@ const api = axios.create({
   timeout: 10000,
 });
 
+export function configureApiBaseUrl(apiBaseUrl?: string): void {
+  api.defaults.baseURL = apiBaseUrl
+    ? `${apiBaseUrl.replace(/\/$/, "")}/api`
+    : "/api";
+}
+
 export default api;

@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
 from app.config import settings
-from app.models.base import engine, Base
+from app.models.base import engine, Base, ensure_schema
 
 # 导入所有模型（确保 Base.metadata 感知所有表）
 import app.models.repo  # noqa: F401
@@ -26,6 +26,7 @@ async def lifespan(app: FastAPI):
     # 确保 repos 目录存在
     Path(settings.repos_dir).mkdir(parents=True, exist_ok=True)
     Base.metadata.create_all(bind=engine)
+    ensure_schema()
     runner = ReviewTaskRunner()
     app.state.review_runner = runner
     await runner.start()
@@ -59,6 +60,12 @@ app.include_router(stats_router)
 @app.get("/api/health")
 def health():
     return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/api/ready")
+def ready():
+    """报告应用已完成 lifespan 初始化，可以接收业务请求。"""
+    return {"status": "ready", "version": "0.1.0"}
 
 
 # ── Frontend static files + SPA fallback ──

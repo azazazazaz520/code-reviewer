@@ -1,0 +1,54 @@
+{
+  "name": "code-reviewer-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron desktop shell for Code Reviewer",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:backend": "powershell -ExecutionPolicy Bypass -File scripts/build-backend.ps1",
+    "dev": "concurrently -k \"npm:dev:frontend\" \"npm:dev:electron\"",
+    "dev:frontend": "npm.cmd --prefix ../frontend run dev",
+    "dev:electron": "npm run build && cross-env CODE_REVIEWER_DESKTOP_MODE=development electron .",
+    "start": "electron .",
+    "test": "npm run build && node --test dist/sidecar-manager.test.js",
+    "package:win": "npm run build && npm.cmd --prefix ../frontend run build && npm run build:backend && electron-builder --win"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "concurrently": "^9.2.1",
+    "cross-env": "^10.0.0",
+    "electron": "^37.2.6",
+    "electron-builder": "^26.0.12",
+    "typescript": "^6.0.0"
+  },
+  "build": {
+    "appId": "com.codereviewer.desktop",
+    "productName": "Code Reviewer",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../frontend/dist",
+        "to": "frontend"
+      },
+      {
+        "from": "resources/backend",
+        "to": "backend"
+      }
+    ],
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
+    }
+  }
+}
