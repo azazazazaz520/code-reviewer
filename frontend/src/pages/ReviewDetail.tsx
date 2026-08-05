@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { ChevronLeft, TriangleAlert } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, Trash2, TriangleAlert } from "lucide-react";
 import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
 import { reviewApi } from "../api/reviews";
 import { Badge } from "../components/ui/badge";
@@ -9,7 +9,9 @@ import { Separator } from "../components/ui/separator";
 import { Skeleton } from "../components/ui/skeleton";
 import FindingCard from "../components/FindingCard";
 import ReviewProgress from "../components/ReviewProgress";
+import ChangeDiffViewer from "../components/ChangeDiffViewer";
 import { getSeverityConfig } from "../lib/severity";
+import { formatErrorMessage, formatReviewerName } from "../lib/error-message";
 import {
   BarChart,
   Bar,
@@ -55,7 +57,10 @@ export default function ReviewDetail() {
   const [logs, setLogs] = useState<ReviewLog[]>([]);
   const [logPolling, setLogPolling] = useState(true);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [reportError, setReportError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionPending, setActionPending] = useState(false);
 
   const fetchAll = useCallback(async () => {
     if (!id) return;
@@ -69,6 +74,18 @@ export default function ReviewDetail() {
       statusResult.status === "fulfilled" ? statusResult.value.data : null;
     const reportResponse =
       reportResult.status === "fulfilled" ? reportResult.value.data : null;
+
+    if (
+      statusResult.status === "rejected" &&
+      reportResult.status === "rejected" &&
+      logsResult.status === "rejected"
+    ) {
+      setLoading(false);
+      if (!task && !report) {
+        setLoadError("无法读取审查状态，请检查后端服务后重试");
+      }
+      return;
+    }
 
     if (status) setTask(status);
 
@@ -85,6 +102,7 @@ export default function ReviewDetail() {
 
     if (isTerminal) {
       setPolling(false);
+      setLogPolling(false);
       if (reportResult.status === "rejected") {
         setReportError("审查已结束，但报告读取失败，请稍后重试");
       } else if (!reportResponse?.report && terminalStatus === "done") {
@@ -101,13 +119,25 @@ export default function ReviewDetail() {
       );
       if (hasComplete) setLogPolling(false);
     }
+    setLoading(false);
   }, [id]);
 
   // Initial fetch
   useEffect(() => {
-    if (!id) return;
-    fetchAll();
-    setLoading(false);
+    if (!id) {
+      setLoading(false);
+      setLoadError("缺少审查任务 ID");
+      return;
+    }
+    setTask(null);
+    setReport(null);
+    setLogs([]);
+    setPolling(true);
+    setLogPolling(true);
+    setLoadError(null);
+    setReportError(null);
+    setLoading(true);
+    void fetchAll();
   }, [id, fetchAll]);
 
   // Polling: only when status or logs are still pending
@@ -118,7 +148,41 @@ export default function ReviewDetail() {
   }, [id, polling, logPolling, fetchAll]);
 
   // ── Loading state ──
-  if (loading && polling) {
+  const retry = () => {
+    setLoading(true);
+    setLoadError(null);
+    setReportError(null);
+    setPolling(true);
+    setLogPolling(true);
+    void fetchAll();
+  };
+
+  const manageReview = async (action: "archive" | "restore" | "delete") => {
+    if (!task) return;
+    if (action === "delete" && !window.confirm("永久删除这条审查记录？报告、日志和变更快照也会一并删除，无法恢复。")) {
+      return;
+    }
+    setActionPending(true);
+    setActionError(null);
+    try {
+      if (action === "archive") await reviewApi.archive(task.id);
+      if (action === "restore") await reviewApi.restore(task.id);
+      if (action === "delete") {
+        await reviewApi.remove(task.id);
+        navigate(-1);
+        return;
+      }
+      const refreshed = await reviewApi.status(task.id);
+      setTask(refreshed.data);
+    } catch (error) {
+      const responseError = error as { response?: { data?: { detail?: string } }; message?: string };
+      setActionError(responseError.response?.data?.detail || responseError.message || "更新审查记录失败");
+    } finally {
+      setActionPending(false);
+    }
+  };
+
+  if (loading) {
     return (
       <div className="space-y-4">
         <Skeleton className="h-8 w-24" />
@@ -147,8 +211,9 @@ export default function ReviewDetail() {
             审查失败
           </h2>
           <p className="text-destructive/80 mt-2">
-            {task.error_message || "未知错误"}
+            {formatErrorMessage(task.error_message)}
           </p>
+          <Button className="mt-4" variant="outline" onClick={retry}>重新加载</Button>
         </div>
       </div>
     );
@@ -167,6 +232,26 @@ export default function ReviewDetail() {
             报告不可用
           </h2>
           <p className="text-destructive/80 mt-2">{reportError}</p>
+          <Button className="mt-4" variant="outline" onClick={retry}>重试</Button>
+        </div>
+      </div>
+    );
+  }
+
+  if (loadError && !task && !report) {
+    return (
+      <div className="space-y-4">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6 text-center">
+          <h2 className="text-lg font-semibold text-destructive flex items-center justify-center gap-2">
+            <TriangleAlert className="h-5 w-5" />
+            审查状态不可用
+          </h2>
+          <p className="text-destructive/80 mt-2">{loadError}</p>
+          <Button className="mt-4" variant="outline" onClick={retry}>重试</Button>
         </div>
       </div>
     );
@@ -199,6 +284,7 @@ export default function ReviewDetail() {
   const attentionChecks = (report.checks ?? []).filter(
     (check) => check.status !== "pass",
   );
+  const reviewerOutputs = Object.entries(report.reviewer_outputs ?? {});
 
   const allFindings = report.findings;
   const filteredFindings = filterSeverity
@@ -213,10 +299,23 @@ export default function ReviewDetail() {
   return (
     <div className="space-y-4">
       {/* Navigation */}
-      <Button variant="ghost" onClick={() => navigate(-1)}>
-        <ChevronLeft className="h-4 w-4 mr-1" />
-        返回
-      </Button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        {task && (
+          <div className="flex flex-wrap items-center gap-2">
+            {task.archived_at ? (
+              <Button variant="outline" size="sm" disabled={actionPending} onClick={() => void manageReview("restore")}><ArchiveRestore className="mr-1 h-4 w-4" />恢复记录</Button>
+            ) : (
+              <Button variant="outline" size="sm" disabled={actionPending || task.status === "pending" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
+            )}
+            <Button variant="destructive" size="sm" disabled={actionPending || task.status === "pending" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
+          </div>
+        )}
+      </div>
+      {actionError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{actionError}</div>}
 
       {/* Progress log (if not polling) */}
       {report && logs.length > 0 && !polling && (
@@ -244,6 +343,8 @@ export default function ReviewDetail() {
         <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
 
+      <ChangeDiffViewer changes={report.changes} />
+
       {attentionChecks.length > 0 && (
         <div className="rounded-lg border bg-card p-4">
           <h3 className="text-sm font-medium mb-2">校验摘要</h3>
@@ -258,13 +359,52 @@ export default function ReviewDetail() {
                   }`}
                 />
                 <div>
-                  <div className="font-medium">{check.name}</div>
-                  <div className="text-muted-foreground">{check.message}</div>
+                  <div className="font-medium">{formatReviewerName(check.name.replace(/^reviewer_/, ""))}</div>
+                  <div className="text-muted-foreground">{formatErrorMessage(check.message)}</div>
                 </div>
               </div>
             ))}
           </div>
         </div>
+      )}
+
+      {reviewerOutputs.length > 0 && (
+        <details className="rounded-lg border bg-card">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-medium">
+            查看 Reviewer 原始输出与候选意见
+          </summary>
+          <div className="space-y-4 border-t px-4 py-4">
+            {reviewerOutputs.map(([reviewerName, trace]) => (
+              <section key={reviewerName} className="space-y-3">
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-medium">{formatReviewerName(reviewerName)}</h3>
+                  <span className="text-xs text-muted-foreground">
+                    候选意见 {trace.candidate_findings.length} 条
+                  </span>
+                </div>
+                {trace.error_message && (
+                  <p className="text-sm text-destructive">{formatErrorMessage(trace.error_message)}</p>
+                )}
+                {trace.attempts.map((attempt, index) => (
+                  <div key={`${attempt.stage}-${index}`} className="space-y-1">
+                    <div className="text-xs font-medium text-muted-foreground">
+                      {attempt.stage === "format_repair" ? "格式修复输出" : "原始输出"}
+                      {attempt.truncated ? "（已截断）" : ""}
+                    </div>
+                    <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+                      {attempt.output || "（空输出）"}
+                    </pre>
+                  </div>
+                ))}
+                {trace.candidate_findings.length > 0 && (
+                  <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-md bg-muted p-3 text-xs">
+                    {JSON.stringify(trace.candidate_findings, null, 2)}
+                  </pre>
+                )}
+              </section>
+            ))}
+          </div>
+        </details>
       )}
 
       <Separator />

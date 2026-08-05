@@ -1,6 +1,6 @@
 from datetime import datetime, UTC
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, inspect, text
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.types import TypeDecorator, DateTime
 
@@ -41,6 +41,21 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 class Base(DeclarativeBase):
     pass
+
+
+def ensure_schema() -> None:
+    """Apply additive SQLite changes for installations without migrations."""
+    if "sqlite" not in settings.database_url:
+        return
+
+    inspector = inspect(engine)
+    if "review_tasks" not in inspector.get_table_names():
+        return
+
+    columns = {column["name"] for column in inspector.get_columns("review_tasks")}
+    if "archived_at" not in columns:
+        with engine.begin() as connection:
+            connection.execute(text("ALTER TABLE review_tasks ADD COLUMN archived_at DATETIME"))
 
 
 def get_db():
