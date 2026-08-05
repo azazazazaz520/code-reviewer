@@ -21,7 +21,8 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 @router.get("/overview", response_model=OverviewStats)
 def get_overview(db: Session = Depends(get_db)):
     """全局统计总览：总审查次数、本月审查次数、风险分布等。"""
-    total = db.query(func.count(ReviewTask.id)).scalar() or 0
+    active_filter = ReviewTask.archived_at.is_(None)
+    total = db.query(func.count(ReviewTask.id)).filter(active_filter).scalar() or 0
     active_repos = db.query(func.count(Repo.id)).scalar() or 0
 
     # 本月审查次数
@@ -31,13 +32,18 @@ def get_overview(db: Session = Depends(get_db)):
     this_month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     monthly = (
         db.query(func.count(ReviewTask.id))
-        .filter(ReviewTask.created_at >= this_month_start)
+        .filter(ReviewTask.created_at >= this_month_start, active_filter)
         .scalar()
         or 0
     )
 
     # 风险分布
-    reports = db.query(ReviewReport).all()
+    reports = (
+        db.query(ReviewReport)
+        .join(ReviewTask)
+        .filter(active_filter)
+        .all()
+    )
     risk_dist = {"low": 0, "medium": 0, "high": 0, "critical": 0}
     for r in reports:
         risk_dist[r.risk_level] = risk_dist.get(r.risk_level, 0) + 1
@@ -47,6 +53,7 @@ def get_overview(db: Session = Depends(get_db)):
         db.query(ReviewTask, Repo.name, ReviewReport.risk_level)
         .join(Repo, ReviewTask.repo_id == Repo.id)
         .outerjoin(ReviewReport, ReviewReport.task_id == ReviewTask.id)
+        .filter(active_filter)
         .order_by(ReviewTask.created_at.desc())
         .limit(10)
         .all()
@@ -73,7 +80,7 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
     """单仓库统计。"""
     total = (
         db.query(func.count(ReviewTask.id))
-        .filter(ReviewTask.repo_id == repo_id)
+        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
         .scalar()
         or 0
     )
@@ -81,7 +88,7 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
     reports = (
         db.query(ReviewReport)
         .join(ReviewTask)
-        .filter(ReviewTask.repo_id == repo_id)
+        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
         .all()
     )
 
@@ -94,7 +101,7 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
 
     recent = (
         db.query(ReviewTask)
-        .filter(ReviewTask.repo_id == repo_id)
+        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
         .order_by(ReviewTask.created_at.desc())
         .limit(10)
         .all()
@@ -126,7 +133,7 @@ def get_heatmap(db: Session = Depends(get_db)):
         )
         .join(Repo, ReviewTask.repo_id == Repo.id)
         .join(ReviewReport, ReviewReport.task_id == ReviewTask.id)
-        .filter(ReviewTask.status == "done")
+        .filter(ReviewTask.status == "done", ReviewTask.archived_at.is_(None))
         .order_by(ReviewTask.repo_id, func.strftime("%Y-%m", ReviewTask.completed_at))
         .all()
     )

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import { Plus } from "lucide-react";
+import { useCallback, useEffect, useState } from "react";
+import { Archive, Plus } from "lucide-react";
 import type { OverviewStats, ReviewTask, HeatmapData } from "../types";
 import { statsApi } from "../api/stats";
+import { reviewApi } from "../api/reviews";
 import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "../components/ui/card";
 import { Button } from "../components/ui/button";
@@ -38,34 +39,74 @@ export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
 
-  const [error, setError] = useState<string | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
+  const [heatmapError, setHeatmapError] = useState<string | null>(null);
+  const [statsLoading, setStatsLoading] = useState(true);
+  const [actionPendingId, setActionPendingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
 
-  useEffect(() => {
-    statsApi.overview().then((res) => setStats(res.data)).catch((err) => {
-      console.error("Failed to load dashboard stats:", err);
-      setError(err?.response?.data?.detail || err?.message || "无法加载仪表盘数据");
-    });
-    statsApi.heatmap().then((res) => setHeatmap(res.data)).catch(() => {});
+  const getErrorMessage = (error: unknown, fallback: string) => {
+    const responseError = error as { response?: { data?: { detail?: string } }; message?: string };
+    return responseError.response?.data?.detail || responseError.message || fallback;
+  };
+
+  const loadStats = useCallback(async () => {
+    setStatsLoading(true);
+    setStatsError(null);
+    try {
+      const res = await statsApi.overview();
+      setStats(res.data);
+    } catch (error) {
+      console.error("Failed to load dashboard stats:", error);
+      setStatsError(getErrorMessage(error, "无法加载仪表盘数据"));
+    } finally {
+      setStatsLoading(false);
+    }
   }, []);
 
-  if (error) {
+  const loadHeatmap = useCallback(async () => {
+    setHeatmapError(null);
+    try {
+      const res = await statsApi.heatmap();
+      setHeatmap(res.data);
+    } catch (error) {
+      setHeatmapError(getErrorMessage(error, "无法加载审查活动数据"));
+    }
+  }, []);
+
+  const handleArchive = async (review: ReviewTask) => {
+    if (review.status === "pending" || review.status === "running") return;
+
+    setActionPendingId(review.id);
+    setActionError(null);
+    try {
+      await reviewApi.archive(review.id);
+      await Promise.all([loadStats(), loadHeatmap()]);
+    } catch (error) {
+      setActionError(getErrorMessage(error, "归档审查记录失败"));
+    } finally {
+      setActionPendingId(null);
+    }
+  };
+
+  useEffect(() => {
+    void loadStats();
+    void loadHeatmap();
+  }, [loadHeatmap, loadStats]);
+
+  if (statsError && !stats) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
         <div className="text-destructive text-lg font-semibold">加载失败</div>
-        <div className="text-muted-foreground text-sm">{error}</div>
-        <Button variant="outline" onClick={() => {
-          setError(null);
-          statsApi.overview().then((res) => setStats(res.data)).catch((err) => {
-            setError(err?.response?.data?.detail || err?.message || "无法加载仪表盘数据");
-          });
-        }}>
+        <div className="text-muted-foreground text-sm">{statsError}</div>
+        <Button variant="outline" onClick={() => void loadStats()}>
           重试
         </Button>
       </div>
     );
   }
 
-  if (!stats) {
+  if (statsLoading || !stats) {
     return (
       <div className="space-y-6">
         <div className="flex items-center justify-between">
@@ -129,10 +170,21 @@ export default function Dashboard() {
           <CardTitle className="text-base">审查活动热力图</CardTitle>
         </CardHeader>
         <CardContent>
-          <ReviewHeatmap
-            data={heatmap}
-            onCellClick={(repoId) => navigate(`/repos/${repoId}`)}
-          />
+          {heatmapError ? (
+            <div className="flex flex-col items-center gap-3 py-6 text-center">
+              <div className="text-sm text-destructive">{heatmapError}</div>
+              <Button variant="outline" size="sm" onClick={() => void loadHeatmap()}>
+                重试加载
+              </Button>
+            </div>
+          ) : (
+            <ReviewHeatmap
+              data={heatmap}
+              onCellClick={(repoId, month) =>
+                navigate(`/repos/${repoId}?month=${encodeURIComponent(month)}`)
+              }
+            />
+          )}
         </CardContent>
       </Card>
 
@@ -141,6 +193,11 @@ export default function Dashboard() {
         <CardHeader>
           <CardTitle className="text-base">最近审查</CardTitle>
         </CardHeader>
+        {actionError && (
+          <div role="alert" className="mx-6 mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+            {actionError}
+          </div>
+        )}
         <CardContent className="p-0">
           <Table className="min-w-[760px]">
             <TableHeader>
@@ -166,41 +223,59 @@ export default function Dashboard() {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {stats.recent_reviews.map((r) => (
-                <TableRow key={r.id}>
-                  <TableCell className="px-6 py-3 max-w-[160px] truncate" title={r.repo_name}>
-                    {r.repo_name}
-                  </TableCell>
-                  <TableCell className="px-6 py-3">
-                    {r.review_type === "pr" ? "PR" : "Local"}
-                  </TableCell>
-                  <TableCell className="px-6 py-3">{formatTarget(r)}</TableCell>
-                  <TableCell className="px-6 py-3">
-                    {r.risk_level ? (
-                      <Badge variant={riskBadge[r.risk_level]}>
-                        {r.risk_level.toUpperCase()}
-                      </Badge>
-                    ) : r.status === "done" ? (
-                      <span className="text-muted-foreground">—</span>
-                    ) : (
-                      <Badge variant="secondary">{statusLabel[r.status] || r.status}</Badge>
-                    )}
-                  </TableCell>
-                  <TableCell className="px-6 py-3 text-muted-foreground">
-                    {new Date(r.created_at).toLocaleString()}
-                  </TableCell>
-                  <TableCell className="px-6 py-3 text-right">
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="h-auto p-0"
-                      onClick={() => navigate(`/reviews/${r.id}`)}
-                    >
-                      查看报告
-                    </Button>
+              {stats.recent_reviews.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="px-6 py-10 text-center text-muted-foreground">
+                    暂无审查记录，点击“发起审查”开始
                   </TableCell>
                 </TableRow>
-              ))}
+              ) : stats.recent_reviews.map((r) => (
+                  <TableRow key={r.id}>
+                    <TableCell className="px-6 py-3 max-w-[160px] truncate" title={r.repo_name}>
+                      {r.repo_name}
+                    </TableCell>
+                    <TableCell className="px-6 py-3">
+                      {r.review_type === "pr" ? "PR" : "Local"}
+                    </TableCell>
+                    <TableCell className="px-6 py-3">{formatTarget(r)}</TableCell>
+                    <TableCell className="px-6 py-3">
+                      {r.risk_level ? (
+                        <Badge variant={riskBadge[r.risk_level]}>
+                          {r.risk_level.toUpperCase()}
+                        </Badge>
+                      ) : r.status === "done" ? (
+                        <span className="text-muted-foreground">—</span>
+                      ) : (
+                        <Badge variant="secondary">{statusLabel[r.status] || r.status}</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-muted-foreground">
+                      {new Date(r.created_at).toLocaleString()}
+                    </TableCell>
+                    <TableCell className="px-6 py-3 text-right">
+                      <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          onClick={() => navigate(`/reviews/${r.id}`)}
+                        >
+                          查看详情
+                        </Button>
+                        <Button
+                          variant="link"
+                          size="sm"
+                          className="h-auto p-0"
+                          disabled={actionPendingId === r.id || r.status === "pending" || r.status === "running"}
+                          onClick={() => void handleArchive(r)}
+                        >
+                          <Archive className="mr-1 h-3.5 w-3.5" />
+                          归档
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
             </TableBody>
           </Table>
         </CardContent>

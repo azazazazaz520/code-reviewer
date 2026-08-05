@@ -1,8 +1,8 @@
 import type { HeatmapData, HeatmapRepoRow } from "../types";
 
 const monthLabel = (month: string) => {
-  const [, m] = month.split("-");
-  return `${parseInt(m, 10)}月`;
+  const [year, m] = month.split("-");
+  return `${year}年${parseInt(m, 10)}月`;
 };
 
 const severityVar = (risk: string | null) => {
@@ -87,14 +87,18 @@ export default function ReviewHeatmap({ data, onCellClick }: Props) {
           ))}
         </tbody>
       </table>
-      <div className="flex items-center gap-2 mt-3 text-xs text-muted-foreground">
-        <span>少</span>
+      <div className="flex flex-wrap items-center gap-2 mt-3 text-xs text-muted-foreground">
+        <span>风险等级：</span>
         <span className="w-3 h-3 rounded-sm bg-muted opacity-40" />
+        <span>无</span>
         <span className="w-3 h-3 rounded-sm bg-severity-low" />
+        <span>低</span>
         <span className="w-3 h-3 rounded-sm bg-severity-medium" />
+        <span>中</span>
         <span className="w-3 h-3 rounded-sm bg-severity-high" />
+        <span>高</span>
         <span className="w-3 h-3 rounded-sm bg-severity-critical" />
-        <span>多</span>
+        <span>严重</span>
       </div>
     </div>
   );
