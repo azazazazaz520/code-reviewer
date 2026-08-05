@@ -78,9 +78,10 @@ def get_overview(db: Session = Depends(get_db)):
 @router.get("/repos/{repo_id}", response_model=RepoStats)
 def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
     """单仓库统计。"""
+    active_filter = ReviewTask.archived_at.is_(None)
     total = (
         db.query(func.count(ReviewTask.id))
-        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
+        .filter(ReviewTask.repo_id == repo_id, active_filter)
         .scalar()
         or 0
     )
@@ -88,7 +89,7 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
     reports = (
         db.query(ReviewReport)
         .join(ReviewTask)
-        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
+        .filter(ReviewTask.repo_id == repo_id, active_filter)
         .all()
     )
 
@@ -101,7 +102,7 @@ def get_repo_stats(repo_id: str, db: Session = Depends(get_db)):
 
     recent = (
         db.query(ReviewTask)
-        .filter(ReviewTask.repo_id == repo_id, ReviewTask.archived_at.is_(None))
+        .filter(ReviewTask.repo_id == repo_id, active_filter)
         .order_by(ReviewTask.created_at.desc())
         .limit(10)
         .all()
