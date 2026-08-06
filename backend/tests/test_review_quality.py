@@ -11,11 +11,7 @@ from app.engine.reviewers.base import ReviewerContext, ReviewerOutputError
 from app.engine.reviewers.style import StyleReviewer
 from app.engine.scope import build_review_plan, classify_files
 from app.engine.validators.release import validate_release_manifest
-from app.engine.workflow import (
-    _generate_report_node,
-    _reflection_node,
-    _run_reviews_node,
-)
+from app.engine.nodes import generate_report_node, reflection_node, run_reviews_node
 from app.engine.workflow import run_workflow
 
 
@@ -49,14 +45,16 @@ class ReviewQualityTests(unittest.TestCase):
             "_log_hook": None,
         }
 
-        import app.engine.workflow as workflow
+        import app.engine.reviewers as reviewers
 
-        original_registry = workflow.REVIEWER_REGISTRY
-        workflow.REVIEWER_REGISTRY = {"style_reviewer": BalanceReviewer()}
+        original_registry = dict(reviewers.REVIEWER_REGISTRY)
+        reviewers.REVIEWER_REGISTRY.clear()
+        reviewers.REVIEWER_REGISTRY.update({"style_reviewer": BalanceReviewer()})
         try:
-            _run_reviews_node(state)
+            run_reviews_node(state)
         finally:
-            workflow.REVIEWER_REGISTRY = original_registry
+            reviewers.REVIEWER_REGISTRY.clear()
+            reviewers.REVIEWER_REGISTRY.update(original_registry)
 
         self.assertEqual(
             state["checks"][0]["message"],
@@ -252,16 +250,18 @@ class ReviewQualityTests(unittest.TestCase):
             "_log_hook": None,
         }
 
-        import app.engine.workflow as workflow
+        import app.engine.reviewers as reviewers
 
-        original_registry = workflow.REVIEWER_REGISTRY
-        workflow.REVIEWER_REGISTRY = {"style_reviewer": BrokenReviewer()}
+        original_registry = dict(reviewers.REVIEWER_REGISTRY)
+        reviewers.REVIEWER_REGISTRY.clear()
+        reviewers.REVIEWER_REGISTRY.update({"style_reviewer": BrokenReviewer()})
         try:
-            _run_reviews_node(state)
+            run_reviews_node(state)
         finally:
-            workflow.REVIEWER_REGISTRY = original_registry
+            reviewers.REVIEWER_REGISTRY.clear()
+            reviewers.REVIEWER_REGISTRY.update(original_registry)
 
-        report_state = _generate_report_node(_reflection_node(state))
+        report_state = generate_report_node(reflection_node(state))
 
         self.assertEqual(report_state["findings"], [])
         self.assertTrue(report_state["report"])
@@ -282,7 +282,7 @@ class ReviewQualityTests(unittest.TestCase):
             "checks": [],
         }
 
-        report_state = _generate_report_node(state)
+        report_state = generate_report_node(state)
 
         self.assertEqual(report_state["report"]["review_status"], "complete")
         self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
@@ -329,7 +329,7 @@ class ReviewQualityTests(unittest.TestCase):
             "checks": [],
         }
 
-        report_state = _generate_report_node(state)
+        report_state = generate_report_node(state)
 
         self.assertEqual(report_state["report"]["review_status"], "complete")
         self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
@@ -483,16 +483,18 @@ class ReviewQualityTests(unittest.TestCase):
             "_log_hook": None,
         }
 
-        import app.engine.workflow as workflow
+        import app.engine.reviewers as reviewers
 
-        original_registry = workflow.REVIEWER_REGISTRY
-        workflow.REVIEWER_REGISTRY = {"style_reviewer": TruncatedReviewer()}
+        original_registry = dict(reviewers.REVIEWER_REGISTRY)
+        reviewers.REVIEWER_REGISTRY.clear()
+        reviewers.REVIEWER_REGISTRY.update({"style_reviewer": TruncatedReviewer()})
         try:
-            _run_reviews_node(state)
+            run_reviews_node(state)
         finally:
-            workflow.REVIEWER_REGISTRY = original_registry
+            reviewers.REVIEWER_REGISTRY.clear()
+            reviewers.REVIEWER_REGISTRY.update(original_registry)
 
-        report_state = _generate_report_node(_reflection_node(state))
+        report_state = generate_report_node(reflection_node(state))
 
         attempt = state["reviewer_outputs"]["style_reviewer"]["attempts"][0]
         self.assertEqual(attempt["finish_reason"], "length")
@@ -535,7 +537,7 @@ class ReviewQualityTests(unittest.TestCase):
             },
         }
 
-        report_state = _generate_report_node(state)
+        report_state = generate_report_node(state)
 
         self.assertIn("style_reviewer", report_state["report"]["reviewer_outputs"])
 
