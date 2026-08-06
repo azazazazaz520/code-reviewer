@@ -66,7 +66,7 @@ class PromptApiTests(unittest.TestCase):
 
     def test_invalid_input_and_unknown_session_have_explicit_errors(self):
         with TestClient(app) as client:
-            invalid = client.post("/api/prompts/optimize", json={"content": "太短"})
+            invalid = client.post("/api/prompts/optimize", json={"content": ""})
             self.assertEqual(invalid.status_code, 422)
 
             unknown = client.get("/api/prompts/sessions/not-found")

@@ -59,7 +59,7 @@ class PromptResult(BaseModel):
 
 
 class PromptOptimizeRequest(BaseModel):
-    content: str = Field(min_length=20, max_length=12000)
+    content: str = Field(min_length=1, max_length=12000)
     persona: PromptPersona = PromptPersona.GENERAL
     mode: PromptMode = PromptMode.INSTANT
     glossary_enabled: bool = True

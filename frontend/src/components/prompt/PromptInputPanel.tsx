@@ -96,7 +96,7 @@ export default function PromptInputPanel(props: PromptInputPanelProps) {
           <span>启用内置术语候选。候选术语会交给模型结合上下文判断，不会直接替换原文。</span>
         </label>
 
-        <Button className="w-full" onClick={props.onSubmit} disabled={props.loading || props.content.trim().length < 20}>
+        <Button className="w-full" onClick={props.onSubmit} disabled={props.loading || props.content.trim().length === 0}>
           {props.loading ? "生成中..." : props.mode === "review" ? "生成并开始审查" : "生成结构化结果"}
         </Button>
       </CardContent>

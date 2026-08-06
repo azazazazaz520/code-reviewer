@@ -13,7 +13,7 @@ class Settings(BaseSettings):
 
     # 提示词工作区
     prompt_timeout_seconds: int = 60
-    prompt_min_input_chars: int = 20
+    prompt_min_input_chars: int = 1
     prompt_max_input_chars: int = 12000
     prompt_max_output_tokens: int = 3000
     prompt_session_ttl_seconds: int = 1800

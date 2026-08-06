@@ -42,11 +42,12 @@ class FakeLLM:
 
 
 class PromptDomainTests(unittest.TestCase):
-    def test_input_schema_rejects_short_content_and_invalid_enum(self):
+    def test_input_schema_allows_short_non_empty_content_and_rejects_empty_or_invalid_values(self):
         with self.assertRaises(ValueError):
-            PromptOptimizeRequest(content="太短")
+            PromptOptimizeRequest(content="")
+        self.assertEqual(PromptOptimizeRequest(content="太短").content, "太短")
         with self.assertRaises(ValueError):
-            PromptOptimizeRequest(content="x" * 20, persona="mobile")
+            PromptOptimizeRequest(content="太短", persona="mobile")
 
     def test_builtin_mapper_returns_candidates_without_replacing_input(self):
         content = "页面不够丝滑，点击后出现刷新后恢复"
