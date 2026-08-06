@@ -31,16 +31,20 @@ E:\code-reviewer\
 │   │   │   └── schemas.py       # Pydantic 请求/响应 Schema
 │   │   ├── engine/
 │   │   │   ├── __init__.py
-│   │   │   ├── workflow.py      # LangGraph Workflow 定义
+│   │   │   ├── workflow.py      # LangGraph Workflow 编排（图构建与运行入口）
 │   │   │   ├── state.py         # ReviewState
 │   │   │   ├── nodes/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── load_pr.py
 │   │   │   │   ├── planning.py
+│   │   │   │   ├── validate_changes.py
 │   │   │   │   ├── collect_context.py
 │   │   │   │   ├── run_reviews.py
 │   │   │   │   ├── reflection.py
 │   │   │   │   └── generate_report.py
+│   │   │   ├── crg.py           # CRG 影响半径分析（失败静默降级）
+│   │   │   ├── quality.py       # 审查质量指标与门槛检查纯函数
+│   │   │   └── reporting.py     # Review Report 聚合纯函数
 │   │   │   ├── reviewers/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── base.py      # Reviewer 基类
