@@ -36,6 +36,13 @@ const riskBannerClass: Record<string, string> = {
   low: "border-severity-low/40 bg-severity-low/10",
 };
 
+function sourceLabel(task: ReviewTask | null) {
+  if (task?.source_type === "workspace") return "本地工作区";
+  if (task?.source_type === "remote_latest") return "远程最新提交";
+  if (task?.source_type === "remote_commit") return "远程指定 Commit";
+  return task?.review_type === "pr" ? `PR #${task.pr_number ?? "—"}` : "远程 Commit";
+}
+
 function groupFindingsBySeverity(findings: Finding[]) {
   const groups: Record<string, Finding[]> = {
     critical: [],
@@ -98,6 +105,7 @@ export default function ReviewDetail() {
     const isTerminal =
       terminalStatus !== undefined &&
       terminalStatus !== "pending" &&
+      terminalStatus !== "preparing" &&
       terminalStatus !== "running";
 
     if (isTerminal) {
@@ -324,9 +332,9 @@ export default function ReviewDetail() {
             {task.archived_at ? (
               <Button variant="outline" size="sm" disabled={actionPending} onClick={() => void manageReview("restore")}><ArchiveRestore className="mr-1 h-4 w-4" />恢复记录</Button>
             ) : (
-              <Button variant="outline" size="sm" disabled={actionPending || task.status === "pending" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
+              <Button variant="outline" size="sm" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
             )}
-            <Button variant="destructive" size="sm" disabled={actionPending || task.status === "pending" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
+            <Button variant="destructive" size="sm" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
           </div>
         )}
       </div>
@@ -347,6 +355,19 @@ export default function ReviewDetail() {
         </Badge>
         <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
+
+      {task && (
+        <div className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            <span>来源：{sourceLabel(task)}</span>
+            {task.base_revision && <span>基准：<code>{task.base_revision.slice(0, 12)}</code></span>}
+            {task.head_revision && <span>目标：<code>{task.head_revision.slice(0, 12)}</code></span>}
+          </div>
+          {task.source_type === "workspace" && task.workspace_stats_json && (
+            <div className="mt-1 text-xs">工作区快照：{task.workspace_stats_json}</div>
+          )}
+        </div>
+      )}
 
       <ChangeDiffViewer changes={report.changes} />
 

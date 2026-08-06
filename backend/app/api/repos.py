@@ -2,18 +2,63 @@ import shutil
 import subprocess
 import uuid as uuid_mod
 import os
+from datetime import datetime, UTC
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.models.base import get_db
-from app.models.repo import Repo
-from app.models.schemas import BranchItem, PRItem, CommitItem, RepoCreate, RepoResponse
+from app.models.repo import Repo, RepositoryRef
+from app.models.schemas import (
+    BranchItem,
+    CommitItem,
+    PRItem,
+    RepoCreate,
+    RepoResponse,
+    SyncResponse,
+    WorkspaceRepoCreate,
+)
+from app.engine.snapshot import SnapshotError, validate_workspace_path
 from app.services.git_host import GitHostError, get_open_pulls, parse_git_repository
+from app.services.repo_sync import (
+    RepoSyncError,
+    persist_sync_result,
+    resolve_remote_branch,
+    sync_repository,
+)
 
 router = APIRouter(prefix="/api/repos", tags=["repos"])
+
+
+def _validate_clone_url(git_url: str) -> str:
+    """仅允许远程 Git 地址，避免将用户输入解释为 git 选项。"""
+    value = git_url.strip()
+    if (
+        not value
+        or value.startswith("-")
+        or any(character.isspace() or ord(character) < 32 for character in value)
+    ):
+        raise HTTPException(status_code=400, detail="Git 仓库地址格式无效")
+
+    if value.startswith(("http://", "https://")):
+        try:
+            parsed = urlparse(value)
+            hostname = parsed.hostname
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Git 仓库地址格式无效") from exc
+        if not parsed.netloc or not hostname:
+            raise HTTPException(status_code=400, detail="Git 仓库地址格式无效")
+    elif value.startswith("git@"):  # SCP 风格 SSH 地址，例如 git@host:owner/repo.git
+        host_and_path = value[4:]
+        if ":" not in host_and_path or not all(host_and_path.split(":", 1)):
+            raise HTTPException(status_code=400, detail="Git 仓库地址格式无效")
+    else:
+        raise HTTPException(status_code=400, detail="Git 仓库地址格式无效")
+
+    return value
 
 
 @router.get("", response_model=list[RepoResponse])
@@ -23,22 +68,24 @@ def list_repos(db: Session = Depends(get_db)):
 
 @router.post("", response_model=RepoResponse, status_code=201)
 def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
+    git_url = _validate_clone_url(body.git_url)
+
     # 确定 clone 目标目录
     repo_uuid = str(uuid_mod.uuid4())
     clone_dir = Path(settings.repos_dir) / repo_uuid
     clone_dir.mkdir(parents=True, exist_ok=True)
 
     # 构造 clone URL（私有 GitHub/Gitee 仓库注入对应 token）
-    clone_url = body.git_url
+    clone_url = git_url
     try:
-        clone_url = parse_git_repository(body.git_url).clone_url(body.git_url)
+        clone_url = parse_git_repository(git_url).clone_url(git_url)
     except GitHostError:
         # 保持本地/其他 Git 远程地址的原有 clone 能力；仅 PR API 需要受支持的平台。
         pass
 
     # 执行 clone
     result = subprocess.run(
-        ["git", "clone", clone_url, str(clone_dir)],
+        ["git", "clone", "--", clone_url, str(clone_dir)],
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -63,11 +110,70 @@ def create_repo(body: RepoCreate, db: Session = Depends(get_db)):
     return repo
 
 
+@router.post("/workspace", response_model=RepoResponse, status_code=201)
+def register_workspace_repo(
+    body: WorkspaceRepoCreate,
+    db: Session = Depends(get_db),
+):
+    """登记用户选择的本地 Git 工作区，避免将其当作远程仓库重新 clone。"""
+    try:
+        workspace_root = Path(validate_workspace_path(body.path)).resolve()
+    except SnapshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = db.query(Repo).filter(Repo.local_path == str(workspace_root)).first()
+    if existing:
+        return existing
+
+    repo = Repo(
+        id=str(uuid_mod.uuid4()),
+        name=(body.name or workspace_root.name or "本地工作区").strip(),
+        git_url="",
+        local_path=str(workspace_root),
+    )
+    db.add(repo)
+    db.commit()
+    db.refresh(repo)
+    return repo
+
+
 @router.get("/{repo_id}", response_model=RepoResponse)
 def get_repo(repo_id: str, db: Session = Depends(get_db)):
     repo = db.query(Repo).filter(Repo.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="仓库不存在")
+    return repo
+
+
+@router.put("/{repo_id}/workspace", response_model=RepoResponse)
+def update_workspace_repo(
+    repo_id: str,
+    body: WorkspaceRepoCreate,
+    db: Session = Depends(get_db),
+):
+    """更新已登记本地仓库的名称或工作区路径。"""
+    repo = db.query(Repo).filter(Repo.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+
+    try:
+        workspace_root = Path(validate_workspace_path(body.path)).resolve()
+    except SnapshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    existing = (
+        db.query(Repo)
+        .filter(Repo.local_path == str(workspace_root), Repo.id != repo_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="该本地工作区已经添加")
+
+    repo.name = (body.name or workspace_root.name or "本地工作区").strip()
+    repo.git_url = ""
+    repo.local_path = str(workspace_root)
+    db.commit()
+    db.refresh(repo)
     return repo
 
 
@@ -94,67 +200,60 @@ def update_repo(repo_id: str, body: RepoCreate, db: Session = Depends(get_db)):
     return repo
 
 
-@router.get("/{repo_id}/branches", response_model=list[BranchItem])
-def list_branches(repo_id: str, db: Session = Depends(get_db)):
-    """获取本地 clone 中可用于审查的分支。"""
+@router.post("/{repo_id}/sync", response_model=SyncResponse)
+def sync_repo(repo_id: str, db: Session = Depends(get_db)):
+    """同步远程仓库并保存远程分支头快照。"""
     repo = db.query(Repo).filter(Repo.id == repo_id).first()
     if not repo:
         raise HTTPException(status_code=404, detail="仓库不存在")
 
-    if not os.path.isdir(repo.local_path):
-        raise HTTPException(status_code=400, detail=f"本地路径不存在: {repo.local_path}")
-
-    fetch_error: str | None = None
+    checked_at = datetime.now(UTC)
+    repo.sync_status = "syncing"
+    repo.sync_error = None
+    db.commit()
     try:
-        fetch_result = subprocess.run(
-            ["git", "-C", repo.local_path, "fetch", "--all", "--prune"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=30,
+        result = sync_repository(repo.local_path)
+    except RepoSyncError as exc:
+        repo.sync_status = "failed"
+        repo.sync_error = str(exc)
+        db.commit()
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    previous = persist_sync_result(db, repo, result, checked_at)
+    branch_items: list[BranchItem] = []
+    for branch in result.branches:
+        old_revision = previous.get(branch.name)
+        branch_items.append(
+            BranchItem(
+                name=branch.name,
+                head_revision=branch.head_revision,
+                previous_revision=old_revision,
+                has_new_commits=bool(old_revision and old_revision != branch.head_revision),
+            )
         )
-        if fetch_result.returncode != 0:
-            fetch_error = (fetch_result.stderr or "").strip()
-    except subprocess.TimeoutExpired:
-        fetch_error = "git fetch 执行超时"
 
-    try:
-        result = subprocess.run(
-            [
-                "git",
-                "-C",
-                repo.local_path,
-                "for-each-ref",
-                "--format=%(refname:short)",
-                "refs/heads",
-                "refs/remotes/origin",
-            ],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=10,
-        )
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="读取分支列表超时")
+    db.commit()
+    return SyncResponse(
+        status="ready",
+        checked_at=checked_at,
+        default_branch=result.default_branch,
+        branches=sorted(branch_items, key=lambda item: item.name),
+    )
 
-    if result.returncode != 0:
-        stderr = (result.stderr or "").strip()
-        raise HTTPException(status_code=500, detail=f"读取分支列表失败: {stderr}")
 
-    branches: list[str] = []
-    for raw_name in result.stdout.splitlines():
-        name = raw_name.strip()
-        if not name or name.endswith("/HEAD"):
-            continue
-        if name.startswith("origin/"):
-            name = name.removeprefix("origin/")
-        if name not in branches:
-            branches.append(name)
-
-    if not branches and fetch_error:
-        raise HTTPException(status_code=502, detail=f"无法同步仓库分支: {fetch_error}")
-
-    return [BranchItem(name=name) for name in sorted(branches)]
+@router.get("/{repo_id}/branches", response_model=list[BranchItem])
+def list_branches(repo_id: str, db: Session = Depends(get_db)):
+    """读取最近一次同步得到的远程分支，不触发网络操作。"""
+    repo = db.query(Repo).filter(Repo.id == repo_id).first()
+    if not repo:
+        raise HTTPException(status_code=404, detail="仓库不存在")
+    refs = (
+        db.query(RepositoryRef)
+        .filter(RepositoryRef.repo_id == repo.id)
+        .order_by(RepositoryRef.name.asc())
+        .all()
+    )
+    return [BranchItem(name=ref.name, head_revision=ref.head_revision) for ref in refs]
 
 
 @router.get("/{repo_id}/prs", response_model=list[PRItem])
@@ -246,16 +345,9 @@ def list_commits(
 
 
 def _resolve_branch_ref(local_path: str, branch: str) -> str:
-    """将 UI 展示的分支名解析为本地或 origin 远端 ref。"""
-    candidates = [branch] if branch.startswith("origin/") else [branch, f"origin/{branch}"]
-    for candidate in candidates:
-        result = subprocess.run(
-            ["git", "-C", local_path, "rev-parse", "--verify", f"{candidate}^{{commit}}"],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=10,
-        )
-        if result.returncode == 0:
-            return candidate
-    raise HTTPException(status_code=400, detail=f"分支不存在或不可用: {branch}")
+    """将 UI 分支名解析为 origin 远程跟踪引用。"""
+    try:
+        resolve_remote_branch(local_path, branch)
+    except RepoSyncError as exc:
+        raise HTTPException(status_code=400, detail=f"分支不存在或不可用: {branch}") from exc
+    return f"refs/remotes/origin/{branch.removeprefix('origin/').strip()}"

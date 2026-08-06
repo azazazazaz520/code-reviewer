@@ -38,7 +38,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
   const navigate = useNavigate();
   const [repos, setRepos] = useState<Repo[]>([]);
   const [repoId, setRepoId] = useState<string | null>(preSelectedRepoId ?? null);
-  const [reviewType, setReviewType] = useState<"pr" | "local">("pr");
+  const [reviewType, setReviewType] = useState<"pr" | "local" | "workspace">("pr");
   const [branches, setBranches] = useState<string[]>([]);
   const [branch, setBranch] = useState("");
   const [prs, setPRs] = useState<PRItem[]>([]);
@@ -56,6 +56,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
   const [manualPR, setManualPR] = useState("");
   const [manualCommit, setManualCommit] = useState("");
   const selectedRepo = repos.find((repo) => repo.id === repoId);
+  const isWorkspaceRepo = Boolean(selectedRepo && !selectedRepo.git_url);
 
   useEffect(() => {
     if (!open) return;
@@ -75,10 +76,20 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     setSubmitError(null);
     setLoadingRepos(true);
     repoApi.list()
-      .then((res) => setRepos(res.data))
+      .then((res) => {
+        setRepos(res.data);
+        const initialRepo = res.data.find((repo) => repo.id === (preSelectedRepoId ?? ""));
+        if (initialRepo && !initialRepo.git_url) setReviewType("workspace");
+      })
       .catch((error) => setReposError(getErrorMessage(error, "无法加载仓库列表")))
       .finally(() => setLoadingRepos(false));
   }, [open, preSelectedRepoId]);
+
+  const handleRepoChange = (nextRepoId: string) => {
+    const nextRepo = repos.find((repo) => repo.id === nextRepoId);
+    setRepoId(nextRepoId || null);
+    setReviewType(nextRepo && !nextRepo.git_url ? "workspace" : "pr");
+  };
 
   useEffect(() => {
     if (!repoId) {
@@ -108,15 +119,36 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     }
 
     setPRs([]);
+    if (reviewType === "workspace") {
+      setBranches([]);
+      setBranch("");
+      setCommits([]);
+      setLoadingTargets(false);
+      return;
+    }
+
+    if (isWorkspaceRepo) {
+      setBranches([]);
+      setBranch("");
+      setLoadingTargets(false);
+      setLoadingCommits(true);
+      reviewApi.listCommits(repoId)
+        .then((res) => setCommits(res.data))
+        .catch((error) => setListError(getErrorMessage(error, "无法加载本地 Commit 列表")))
+        .finally(() => setLoadingCommits(false));
+      return;
+    }
+
     setBranch("");
     setCommits([]);
-    repoApi.branches(repoId)
-      .then((res) => setBranches(res.data.map((item) => item.name)))
+    repoApi.sync(repoId)
+      .then((res) => setBranches(res.data.branches.map((item) => item.name)))
       .catch((error) => setBranchError(getErrorMessage(error, "无法加载分支列表")))
       .finally(() => setLoadingTargets(false));
-  }, [repoId, reviewType]);
+  }, [repoId, reviewType, isWorkspaceRepo]);
 
   useEffect(() => {
+    if (isWorkspaceRepo) return;
     if (!repoId || reviewType !== "local" || !branch) {
       setCommits([]);
       setLoadingCommits(false);
@@ -130,7 +162,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
       .then((res) => setCommits(res.data))
       .catch((error) => setListError(getErrorMessage(error, "无法加载该分支的 Commit 列表")))
       .finally(() => setLoadingCommits(false));
-  }, [repoId, reviewType, branch]);
+  }, [repoId, reviewType, branch, isWorkspaceRepo]);
 
   useEffect(() => {
     if (!open) return;
@@ -145,12 +177,22 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     if (!repoId) return;
     const prNumber = selectedPR || (manualPR ? parseInt(manualPR, 10) : undefined);
     const commitHash = selectedCommit || manualCommit.trim() || undefined;
+    const isWorkspaceReview = isWorkspaceRepo;
     if (reviewType === "pr" && !prNumber) {
       setSubmitError("请选择 PR 或输入 PR 编号");
       return;
     }
-    if (reviewType === "local" && !branch) {
+    if (reviewType === "local" && !isWorkspaceReview && !branch) {
       setSubmitError("请选择审查分支");
+      return;
+    }
+    if (isWorkspaceReview && !selectedRepo?.local_path) {
+      setSubmitError("请选择本地工作区");
+      return;
+    }
+
+    if (isWorkspaceReview && reviewType === "local" && !commitHash) {
+      setSubmitError("请选择要审查的本地 Commit");
       return;
     }
 
@@ -158,10 +200,13 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     setSubmitError(null);
     try {
       const response = await reviewApi.submit(repoId, {
-        review_type: reviewType,
+        review_type: isWorkspaceReview ? undefined : reviewType,
+        source_type: isWorkspaceReview ? "workspace" : undefined,
         pr_number: reviewType === "pr" ? prNumber : undefined,
         commit_hash: reviewType === "local" ? commitHash : undefined,
-        branch: reviewType === "local" ? branch : undefined,
+        branch: reviewType === "local" && !isWorkspaceReview ? branch : undefined,
+        workspace_path: isWorkspaceReview ? selectedRepo?.local_path : undefined,
+        workspace_target: isWorkspaceReview ? (reviewType === "local" ? "commit" : "working_tree") : undefined,
       });
       onClose();
       navigate(`/reviews/${response.data.id}`);
@@ -191,7 +236,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
 
         <div>
           <label htmlFor="submit-review-repo" className="text-sm font-medium block mb-1">仓库</label>
-          <select id="submit-review-repo" className="flex h-10 w-full rounded-md border bg-background px-3 py-1 text-sm" value={repoId || ""} onChange={(event) => setRepoId(event.target.value || null)} disabled={loadingRepos || repos.length === 0}>
+          <select id="submit-review-repo" className="flex h-10 w-full rounded-md border bg-background px-3 py-1 text-sm" value={repoId || ""} onChange={(event) => handleRepoChange(event.target.value)} disabled={loadingRepos || repos.length === 0}>
             <option value="">{loadingRepos ? "加载仓库中..." : "选择仓库"}</option>
             {repos.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
           </select>
@@ -201,12 +246,17 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
         <div>
           <span className="text-sm font-medium block mb-1">审查类型</span>
           <div className="flex rounded-md border h-10 w-fit" role="group" aria-label="审查类型">
-            <button type="button" className={`px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "pr" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("pr")} aria-pressed={reviewType === "pr"}>{getPullRequestLabel(selectedRepo?.git_url)} 审查</button>
-            <button type="button" className={`px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>Local Commit</button>
+            {isWorkspaceRepo ? <>
+              <button type="button" className={`px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "workspace" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("workspace")} aria-pressed={reviewType === "workspace"}>未提交改动</button>
+              <button type="button" className={`px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>指定 Commit</button>
+            </> : <>
+              <button type="button" className={`px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "pr" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("pr")} aria-pressed={reviewType === "pr"}>{getPullRequestLabel(selectedRepo?.git_url)} 审查</button>
+              <button type="button" className={`px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>远程 Commit</button>
+            </>}
           </div>
         </div>
 
-        {reviewType === "local" && (
+        {reviewType === "local" && !isWorkspaceRepo && (
           <div>
             <label htmlFor="submit-review-branch" className="text-sm font-medium block mb-1">审查分支</label>
             {branches.length > 0 ? (
@@ -222,9 +272,17 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
           </div>
         )}
 
+        {reviewType === "workspace" && isWorkspaceRepo && (
+          <div className="space-y-2">
+            <span className="text-sm font-medium block">本地工作区</span>
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm font-mono truncate">{selectedRepo?.local_path}</div>
+            <p className="text-xs text-muted-foreground">审查当前 HEAD 之上的暂存、未暂存和未跟踪改动；不会修改原工作区。</p>
+          </div>
+        )}
+
         <div>
-          <span className="text-sm font-medium block mb-1">{reviewType === "pr" ? "选择 PR" : "选择 Commit（可选）"}</span>
-          {reviewType === "local" && !branch && <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">请先选择审查分支</div>}
+          <span className="text-sm font-medium block mb-1">{reviewType === "pr" ? "选择 PR" : isWorkspaceRepo ? "选择本地 Commit" : "选择 Commit（可选）"}</span>
+          {reviewType === "local" && !isWorkspaceRepo && !branch && <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">请先选择审查分支</div>}
           {(loadingTargets || loadingCommits) && (
             <div className="flex items-center gap-2 py-4 text-muted-foreground text-sm"><Loader2 className="h-4 w-4 animate-spin" />加载中...</div>
           )}
@@ -246,7 +304,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
             </div>
           )}
 
-          {!loadingTargets && !loadingCommits && !listError && (reviewType === "pr" || branch) && (
+          {!loadingTargets && !loadingCommits && !listError && (reviewType === "pr" || (reviewType === "local" && (isWorkspaceRepo || branch))) && (
             <div className="border rounded-md max-h-60 overflow-auto" role="listbox" aria-label={reviewType === "pr" ? "PR 列表" : "Commit 列表"}>
               {reviewType === "pr" ? (
                 prs.length === 0 ? (
@@ -272,7 +330,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
         {submitError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{submitError}</div>}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button onClick={() => void handleSubmit()} disabled={submitting || !repoId || (reviewType === "local" && !branch)}>
+          <Button onClick={() => void handleSubmit()} disabled={submitting || !repoId || (reviewType === "local" && !isWorkspaceRepo && !branch) || (isWorkspaceRepo && reviewType === "local" && !selectedCommit && !manualCommit.trim())}>
             {submitting ? "提交中..." : "开始审查"}
           </Button>
         </div>

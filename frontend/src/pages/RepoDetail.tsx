@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useSearchParams } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, RefreshCw, Trash2 } from "lucide-react";
 import type { Repo, ReviewTask } from "../types";
 import { repoApi } from "../api/repos";
 import { reviewApi } from "../api/reviews";
@@ -28,6 +28,7 @@ const statusLabel: Record<string, string> = {
   done: "完成",
   failed: "失败",
   pending: "等待中",
+  preparing: "准备审查中",
   running: "进行中",
 };
 
@@ -43,6 +44,13 @@ function getPullRequestLabel(gitUrl: string) {
   return gitUrl.toLowerCase().includes("gitee.com") ? "Gitee PR" : "GitHub PR";
 }
 
+function sourceLabel(task: ReviewTask) {
+  if (task.source_type === "workspace") return "本地工作区";
+  if (task.source_type === "remote_latest") return "远程最新提交";
+  if (task.source_type === "remote_commit") return "远程 Commit";
+  return task.review_type === "pr" ? "PR" : "远程 Commit";
+}
+
 export default function RepoDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -55,6 +63,7 @@ export default function RepoDetail() {
   const [branches, setBranches] = useState<string[]>([]);
   const [branchError, setBranchError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const [reviewType, setReviewType] = useState<"local" | "pr">("local");
@@ -146,6 +155,27 @@ export default function RepoDetail() {
     }
   };
 
+  const handleSync = async () => {
+    if (!id) return;
+    setSyncing(true);
+    setBranchError(null);
+    try {
+      const response = await repoApi.sync(id);
+      setBranches(response.data.branches.map((item) => item.name));
+      setRepo((current) => current ? {
+        ...current,
+        default_branch: response.data.default_branch,
+        last_synced_at: response.data.checked_at,
+        sync_status: response.data.status,
+        sync_error: null,
+      } : current);
+    } catch (error) {
+      setBranchError(getErrorMessage(error, "同步远程分支失败"));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   const handleDeleteRepo = async () => {
     if (!id) return;
     try {
@@ -198,8 +228,17 @@ export default function RepoDetail() {
           <h1 className="text-2xl font-bold tracking-tight">{repo.name}</h1>
           <p className="mt-1 break-all text-sm text-muted-foreground">{repo.git_url}</p>
         </div>
-        <Button className="w-full sm:w-auto" onClick={() => setReviewModalOpen(true)}>发起审查</Button>
+        <div className="flex w-full gap-2 sm:w-auto">
+          <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => void handleSync()} disabled={syncing}>
+            <RefreshCw className={`mr-1 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+            {syncing ? "同步中..." : "同步远程分支"}
+          </Button>
+          <Button className="flex-1 sm:flex-none" onClick={() => setReviewModalOpen(true)}>发起审查</Button>
+        </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        {repo.last_synced_at ? `最近同步：${new Date(repo.last_synced_at).toLocaleString()}` : "尚未同步远程分支"}
+      </p>
 
       <div className="text-sm">
         {confirmDelete ? (
@@ -220,7 +259,7 @@ export default function RepoDetail() {
             <div className="min-w-0">
               <label className="text-sm font-medium block mb-1">类型</label>
               <div className="flex rounded-md border h-9">
-                <button type="button" className={`flex-1 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-none ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => { setReviewType("local"); setSubmitError(null); }} aria-pressed={reviewType === "local"}>Local Commit</button>
+                <button type="button" className={`flex-1 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-none ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => { setReviewType("local"); setSubmitError(null); }} aria-pressed={reviewType === "local"}>远程 Commit</button>
                 <button type="button" className={`flex-1 px-3 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring md:flex-none ${reviewType === "pr" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => { setReviewType("pr"); setSubmitError(null); }} aria-pressed={reviewType === "pr"}>{getPullRequestLabel(repo.git_url)}</button>
               </div>
             </div>
@@ -287,9 +326,9 @@ export default function RepoDetail() {
               ) : (
                 visibleTasks.map((task) => (
                   <TableRow key={task.id}>
-                    <TableCell className="px-6 py-3">{task.review_type === "pr" ? "PR" : "Local"}</TableCell>
+                    <TableCell className="px-6 py-3">{sourceLabel(task)}</TableCell>
                     <TableCell className="px-6 py-3 font-mono text-sm text-muted-foreground">{task.branch || "—"}</TableCell>
-                    <TableCell className="px-6 py-3 text-muted-foreground">{task.pr_number ? `#${task.pr_number}` : task.commit_hash?.slice(0, 7) || "—"}</TableCell>
+                    <TableCell className="px-6 py-3 text-muted-foreground">{task.pr_number ? `#${task.pr_number}` : (task.head_revision || task.commit_hash)?.slice(0, 7) || "—"}</TableCell>
                     <TableCell className="px-6 py-3"><div className="flex flex-wrap gap-1"><Badge variant={statusVariant[task.status] || "secondary"}>{statusLabel[task.status] || task.status}</Badge>{task.archived_at && <Badge variant="outline">已归档</Badge>}</div></TableCell>
                     <TableCell className="px-6 py-3 text-muted-foreground">{new Date(task.created_at).toLocaleString()}</TableCell>
                     <TableCell className="px-6 py-3 text-right">
@@ -298,9 +337,9 @@ export default function RepoDetail() {
                         {task.archived_at ? (
                           <Button variant="link" size="sm" className="h-auto p-0" disabled={actionPendingId === task.id} onClick={() => void manageTask(task, "restore")}><ArchiveRestore className="mr-1 h-3.5 w-3.5" />恢复</Button>
                         ) : (
-                          <Button variant="link" size="sm" className="h-auto p-0" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "running"} onClick={() => void manageTask(task, "archive")}><Archive className="mr-1 h-3.5 w-3.5" />归档</Button>
+                            <Button variant="link" size="sm" className="h-auto p-0" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "archive")}><Archive className="mr-1 h-3.5 w-3.5" />归档</Button>
                         )}
-                        <Button variant="link" size="sm" className="h-auto p-0 text-destructive" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "running"} onClick={() => void manageTask(task, "delete")}><Trash2 className="mr-1 h-3.5 w-3.5" />删除</Button>
+                        <Button variant="link" size="sm" className="h-auto p-0 text-destructive" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "delete")}><Trash2 className="mr-1 h-3.5 w-3.5" />删除</Button>
                       </div>
                     </TableCell>
                   </TableRow>

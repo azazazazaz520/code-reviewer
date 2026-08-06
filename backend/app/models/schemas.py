@@ -13,11 +13,20 @@ class RepoCreate(BaseModel):
     local_path: str | None = Field(default=None, max_length=500)
 
 
+class WorkspaceRepoCreate(BaseModel):
+    path: str = Field(..., min_length=1, max_length=1000)
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+
+
 class RepoResponse(BaseModel):
     id: str
     name: str
     git_url: str
     local_path: str
+    default_branch: str | None = None
+    last_synced_at: datetime | None = None
+    sync_status: str = "never"
+    sync_error: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -30,12 +39,22 @@ class ReviewType(str, Enum):
     LOCAL = "local"
 
 
+class ReviewSourceType(str, Enum):
+    PR = "pr"
+    REMOTE_LATEST = "remote_latest"
+    REMOTE_COMMIT = "remote_commit"
+    WORKSPACE = "workspace"
+
+
 class ReviewCreate(BaseModel):
-    review_type: ReviewType
+    review_type: ReviewType | None = None
+    source_type: ReviewSourceType | None = None
     pr_number: int | None = None
     commit_hash: str | None = None
     branch: str | None = Field(default=None, max_length=200)
     base_branch: str | None = None
+    workspace_path: str | None = Field(default=None, max_length=1000)
+    workspace_target: str | None = Field(default=None, max_length=30)
 
 
 class ReviewTaskResponse(BaseModel):
@@ -43,10 +62,17 @@ class ReviewTaskResponse(BaseModel):
     repo_id: str
     repo_name: str | None = None  # 仓库名称，由 API 层填充
     review_type: str
+    source_type: str | None = None
     pr_number: int | None = None
     commit_hash: str | None = None
     branch: str | None = None
     base_branch: str | None = None
+    workspace_target: str | None = None
+    head_revision: str | None = None
+    base_revision: str | None = None
+    workspace_fingerprint: str | None = None
+    workspace_stats: dict[str, int] | None = None
+    workspace_stats_json: str | None = None
     status: str
     risk_level: str | None = None  # 从 review_reports JOIN 获取
     error_message: str | None = None
@@ -129,12 +155,15 @@ class ReviewReportResponse(BaseModel):
 
 class ReviewChanges(BaseModel):
     review_type: str = ""
+    source_type: str | None = None
     pr_number: int | None = None
     commit_hash: str | None = None
     branch: str | None = None
     base_branch: str | None = None
     base_revision: str | None = None
     head_revision: str | None = None
+    workspace_fingerprint: str | None = None
+    workspace_stats: dict[str, int] | None = None
     changed_files: list[str] = Field(default_factory=list)
     diff: str = ""
 
@@ -212,6 +241,17 @@ class CommitItem(BaseModel):
 
 class BranchItem(BaseModel):
     name: str
+    head_revision: str | None = None
+    previous_revision: str | None = None
+    has_new_commits: bool = False
+
+
+class SyncResponse(BaseModel):
+    status: str
+    checked_at: datetime
+    default_branch: str | None = None
+    branches: list[BranchItem] = Field(default_factory=list)
+    error: str | None = None
 
 
 # ─── 审查日志 ──────────────────────────────────────────

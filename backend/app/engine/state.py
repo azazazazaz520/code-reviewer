@@ -7,6 +7,7 @@ class ReviewState(TypedDict, total=False):
     # PR 元信息
     repo_id: str
     review_type: str  # "pr" | "local"
+    source_type: str | None
     pr_number: int | None
     commit_hash: str | None
     branch: str | None
@@ -18,6 +19,8 @@ class ReviewState(TypedDict, total=False):
     changed_files: list[str]
     snapshot_revision: str
     snapshot_base_revision: str
+    workspace_fingerprint: str | None
+    workspace_stats: dict[str, int] | None
     context_candidates: list[str]
     context_round: int
     context_initialized: bool

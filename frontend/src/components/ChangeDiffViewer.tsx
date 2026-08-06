@@ -46,6 +46,13 @@ function revisionLabel(revision: string | null) {
   return revision ? revision.slice(0, 12) : "—";
 }
 
+function sourceLabel(changes: ReviewChanges) {
+  if (changes.source_type === "workspace") return "本地工作区";
+  if (changes.source_type === "remote_latest") return "远程最新提交";
+  if (changes.source_type === "remote_commit") return "远程指定 Commit";
+  return changes.review_type === "pr" ? `PR #${changes.pr_number ?? "—"}` : "远程 Commit";
+}
+
 export default function ChangeDiffViewer({ changes }: { changes: ReviewChanges }) {
   const files = useMemo(() => parseDiff(changes), [changes]);
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -67,7 +74,7 @@ export default function ChangeDiffViewer({ changes }: { changes: ReviewChanges }
           </div>
         </div>
         <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-          <span>{changes.review_type === "pr" ? `PR #${changes.pr_number ?? "—"}` : "Local Commit"}</span>
+          <span>{sourceLabel(changes)}</span>
           <span>基线 {revisionLabel(changes.base_revision)}</span>
           <span>提交 {revisionLabel(changes.head_revision || changes.commit_hash)}</span>
         </div>

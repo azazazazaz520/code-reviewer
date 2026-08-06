@@ -7,6 +7,7 @@ export interface DesktopRuntimeInfo {
 
 interface DesktopRuntimeBridge {
   getInfo: () => Promise<DesktopRuntimeInfo>;
+  chooseDirectory: () => Promise<string | null>;
 }
 
 declare global {

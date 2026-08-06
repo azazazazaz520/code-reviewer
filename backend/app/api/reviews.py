@@ -14,6 +14,16 @@ from app.models.schemas import (
     ReviewLogResponse,
 )
 from app.engine.errors import format_user_error
+from app.engine.snapshot import SnapshotError, validate_workspace_path
+from app.services.repo_sync import (
+    RepoSyncError,
+    persist_sync_result,
+    resolve_parent,
+    resolve_remote_branch,
+    resolve_revision,
+    sync_repository,
+)
+from app.services.review_log import ReviewLogBuffer
 
 router = APIRouter(prefix="/api", tags=["reviews"])
 
@@ -48,18 +58,47 @@ def submit_review(
     if not repo:
         raise HTTPException(status_code=404, detail="仓库不存在")
 
-    if body.review_type.value == "pr" and not body.pr_number:
+    source_type = body.source_type.value if body.source_type else None
+    if source_type is None:
+        if body.review_type is None:
+            raise HTTPException(status_code=400, detail="请选择审查来源")
+        source_type = "pr" if body.review_type.value == "pr" else (
+            "remote_commit" if body.commit_hash else "remote_latest"
+        )
+
+    if source_type == "pr" and not body.pr_number:
         raise HTTPException(status_code=400, detail="PR 审查需要 PR 编号")
-    if body.review_type.value == "local" and not body.branch and not body.commit_hash:
-        raise HTTPException(status_code=400, detail="Local 审查请选择分支或输入 Commit Hash")
+    if source_type == "remote_latest" and not body.branch:
+        raise HTTPException(status_code=400, detail="远程最新提交审查需要选择分支")
+    if source_type == "remote_commit" and not body.commit_hash:
+        raise HTTPException(status_code=400, detail="远程 Commit 审查需要 Commit SHA")
+    workspace_root = None
+    if source_type == "workspace" and not body.workspace_path:
+        raise HTTPException(status_code=400, detail="本地工作区审查需要工作区路径")
+    if source_type == "workspace":
+        try:
+            workspace_root = validate_workspace_path(body.workspace_path or "")
+        except SnapshotError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if source_type == "workspace" and (body.workspace_target or "working_tree") not in {
+        "working_tree",
+        "head_commit",
+        "commit",
+    }:
+        raise HTTPException(status_code=400, detail="本地工作区审查目标无效")
+
+    review_type = "pr" if source_type == "pr" else "local"
 
     task = ReviewTask(
         repo_id=repo_id,
-        review_type=body.review_type.value,
+        review_type=review_type,
+        source_type=source_type,
         pr_number=body.pr_number,
         commit_hash=body.commit_hash,
         branch=body.branch,
         base_branch=body.base_branch,
+        source_path=workspace_root,
+        workspace_target=body.workspace_target or ("working_tree" if source_type == "workspace" else None),
         status="pending",
     )
     db.add(task)
@@ -103,7 +142,7 @@ def _get_review_task(task_id: str, db: Session) -> ReviewTask:
 
 
 def _require_terminal(task: ReviewTask) -> None:
-    if task.status in {"pending", "running"}:
+    if task.status in {"pending", "preparing", "running"}:
         raise HTTPException(status_code=409, detail="审查仍在进行中，完成后才能管理该记录")
 
 
@@ -210,10 +249,13 @@ def _run_review_workflow(task_id: str):
     from app.engine.workflow import run_workflow
 
     db = SessionLocal()
+    log_buffer: ReviewLogBuffer | None = None
     try:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task:
             return
+
+        log_buffer = ReviewLogBuffer(task_id)
 
         task.status = "running"
         task.error_message = None
@@ -226,39 +268,48 @@ def _run_review_workflow(task_id: str):
         # 注入日志 hook
         def log_hook(step: str, level: str, message: str,
                      tool_name: str | None = None, tool_args: str | None = None):
-            try:
-                log_entry = ReviewLog(
-                    task_id=task_id,
-                    step=step,
-                    level=level,
-                    message=message,
-                    tool_name=tool_name,
-                    tool_args=tool_args,
-                )
-                db.add(log_entry)
-                db.commit()
-            except Exception:
-                db.rollback()
-                pass  # 日志写入失败不影响审查流程
+            log_buffer.append(
+                step=step,
+                level=level,
+                message=message,
+                tool_name=tool_name,
+                tool_args=tool_args,
+            )
+
+        source_type = task.source_type or (
+            "pr" if task.review_type == "pr" else (
+                "remote_commit" if task.commit_hash else "remote_latest"
+            )
+        )
+        task.source_type = source_type
+
+        if source_type in {"remote_latest", "remote_commit"}:
+            _lock_remote_review_revision(task, repo, db, log_hook)
 
         # 写入开始日志
         log_hook(step="load_pr", level="info",
-                 message=f"开始审查 (type={task.review_type})")
+                 message=f"开始审查 (source={source_type})")
 
         # 运行审查引擎
         result = run_workflow(
-            repo_path=repo.local_path,
+            repo_path=task.source_path or repo.local_path,
             git_url=repo.git_url,
             review_type=task.review_type,
+            source_type=source_type,
             pr_number=task.pr_number,
             commit_hash=task.commit_hash,
             branch=task.branch,
             base_branch=task.base_branch,
+            head_revision=task.head_revision,
+            base_revision=task.base_revision,
+            workspace_path=task.source_path,
+            workspace_target=task.workspace_target,
             log_hook=log_hook,
         )
 
         # 完成日志
         log_hook(step="generate_report", level="info", message="审查完成")
+        log_buffer.flush()
 
         report = ReviewReport(
             task_id=task.id,
@@ -279,10 +330,18 @@ def _run_review_workflow(task_id: str):
         )
         db.add(report)
         task.status = "done"
+        changes = result.get("changes", {})
+        task.workspace_fingerprint = changes.get("workspace_fingerprint")
+        if changes.get("workspace_stats") is not None:
+            task.workspace_stats_json = json.dumps(
+                changes["workspace_stats"], ensure_ascii=False
+            )
         task.completed_at = datetime.now(UTC)
         db.commit()
 
     except Exception as e:
+        if log_buffer is not None:
+            log_buffer.flush()
         db.rollback()
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if task:
@@ -291,7 +350,49 @@ def _run_review_workflow(task_id: str):
             task.completed_at = datetime.now(UTC)
             db.commit()
     finally:
+        if log_buffer is not None:
+            log_buffer.flush()
         db.close()
+
+
+def _lock_remote_review_revision(task: ReviewTask, repo: Repo, db: Session, log_hook) -> None:
+    """同步远程来源并将目标与基准 SHA 固化到任务。"""
+    checked_at = datetime.now(UTC)
+    log_hook(step="prepare_source", level="info", message="正在同步远程分支并锁定审查版本...")
+    try:
+        sync_result = sync_repository(repo.local_path)
+        persist_sync_result(db, repo, sync_result, checked_at)
+        if task.source_type == "remote_latest":
+            if not task.branch:
+                raise RepoSyncError("远程最新提交审查缺少分支")
+            head_revision = resolve_remote_branch(repo.local_path, task.branch)
+        else:
+            if not task.commit_hash:
+                raise RepoSyncError("远程 Commit 审查缺少 Commit SHA")
+            head_revision = resolve_revision(repo.local_path, task.commit_hash)
+
+        if task.base_branch:
+            base_revision = resolve_remote_branch(repo.local_path, task.base_branch)
+            if base_revision == head_revision:
+                base_revision = resolve_parent(repo.local_path, head_revision)
+        else:
+            base_revision = resolve_parent(repo.local_path, head_revision)
+
+        task.head_revision = head_revision
+        task.base_revision = base_revision
+        task.commit_hash = head_revision if task.source_type == "remote_commit" else task.commit_hash
+        db.commit()
+        log_hook(
+            step="prepare_source",
+            level="info",
+            message=(
+                f"已锁定审查版本 head={head_revision[:12]} "
+                f"base={base_revision[:12]}"
+            ),
+        )
+    except RepoSyncError:
+        db.rollback()
+        raise
 
 
 @router.get("/reviews/{task_id}/logs", response_model=list[ReviewLogResponse])

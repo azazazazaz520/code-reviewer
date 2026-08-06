@@ -128,7 +128,15 @@ export default function Dashboard() {
     if (r.review_type === "pr") {
       return r.pr_number ? `#${r.pr_number}` : "—";
     }
-    return r.commit_hash ? r.commit_hash.slice(0, 7) : "—";
+    const revision = r.head_revision || r.commit_hash;
+    return revision ? revision.slice(0, 7) : "—";
+  };
+
+  const sourceLabel = (r: ReviewTask) => {
+    if (r.source_type === "workspace") return "本地工作区";
+    if (r.source_type === "remote_latest") return "远程最新提交";
+    if (r.source_type === "remote_commit") return "远程 Commit";
+    return r.review_type === "pr" ? "PR" : "远程 Commit";
   };
 
   return (
@@ -235,7 +243,7 @@ export default function Dashboard() {
                       {r.repo_name}
                     </TableCell>
                     <TableCell className="px-6 py-3">
-                      {r.review_type === "pr" ? "PR" : "Local"}
+                      {sourceLabel(r)}
                     </TableCell>
                     <TableCell className="px-6 py-3">{formatTarget(r)}</TableCell>
                     <TableCell className="px-6 py-3">

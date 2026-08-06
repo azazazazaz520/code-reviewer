@@ -35,6 +35,8 @@ export default function RepoList() {
 
   const [name, setName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
+  const [repoKind, setRepoKind] = useState<"remote" | "workspace">("remote");
+  const [localPath, setLocalPath] = useState("");
   const [saving, setSaving] = useState(false);
 
   const navigate = useNavigate();
@@ -60,6 +62,8 @@ export default function RepoList() {
     setEditing(null);
     setName("");
     setGitUrl("");
+    setRepoKind("remote");
+    setLocalPath("");
     setFormError(null);
     setShowForm(true);
   };
@@ -68,16 +72,32 @@ export default function RepoList() {
     setEditing(repo);
     setName(repo.name);
     setGitUrl(repo.git_url);
+    setRepoKind(repo.git_url ? "remote" : "workspace");
+    setLocalPath(repo.local_path || "");
     setFormError(null);
     setShowForm(true);
   };
 
   const handleSave = async () => {
-    if (!name.trim() || !gitUrl.trim()) return;
+    if (!name.trim()) return;
+    if (repoKind === "remote" && !gitUrl.trim()) return;
+    if (repoKind === "workspace" && !localPath.trim()) return;
     setSaving(true);
     setFormError(null);
     try {
-      if (editing) {
+      if (repoKind === "workspace") {
+        if (editing) {
+          await repoApi.updateWorkspace(editing.id, {
+            name: name.trim(),
+            path: localPath.trim(),
+          });
+        } else {
+          await repoApi.createWorkspace({
+            name: name.trim(),
+            path: localPath.trim(),
+          });
+        }
+      } else if (editing) {
         await repoApi.update(editing.id, { name: name.trim(), git_url: gitUrl.trim() });
       } else {
         await repoApi.create({ name: name.trim(), git_url: gitUrl.trim() });
@@ -88,6 +108,18 @@ export default function RepoList() {
       setFormError(getErrorMessage(saveError, "保存仓库失败"));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const chooseLocalPath = async () => {
+    if (!window.desktop) {
+      setFormError("添加本地仓库需要使用桌面应用");
+      return;
+    }
+    const selected = await window.desktop.chooseDirectory();
+    if (selected) {
+      setLocalPath(selected);
+      setFormError(null);
     }
   };
 
@@ -129,7 +161,7 @@ export default function RepoList() {
             <TableHeader>
               <TableRow>
                 <TableHead className="px-6 py-3 text-muted-foreground">名称</TableHead>
-                <TableHead className="px-6 py-3 text-muted-foreground">Git URL</TableHead>
+                <TableHead className="px-6 py-3 text-muted-foreground">来源</TableHead>
                 <TableHead className="px-6 py-3 text-right text-muted-foreground w-48">操作</TableHead>
               </TableRow>
             </TableHeader>
@@ -148,8 +180,8 @@ export default function RepoList() {
                 repos.map((repo) => (
                   <TableRow key={repo.id}>
                     <TableCell className="px-6 py-3 font-medium">{repo.name}</TableCell>
-                    <TableCell className="px-6 py-3 max-w-[320px] truncate text-muted-foreground" title={repo.git_url}>
-                      {repo.git_url}
+                    <TableCell className="px-6 py-3 max-w-[320px] truncate text-muted-foreground" title={repo.git_url || repo.local_path}>
+                      {repo.git_url || repo.local_path || "本地工作区"}
                     </TableCell>
                     <TableCell className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
@@ -192,19 +224,34 @@ export default function RepoList() {
             </div>
             <div className="space-y-3">
               <div>
+                <span className="text-sm font-medium">仓库来源</span>
+                <div className="mt-1 flex rounded-md border h-9 w-fit" role="group" aria-label="仓库来源">
+                  <button type="button" className={`px-3 text-sm rounded-l-md ${repoKind === "remote" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setRepoKind("remote")} aria-pressed={repoKind === "remote"}>远程仓库</button>
+                  <button type="button" className={`px-3 text-sm rounded-r-md ${repoKind === "workspace" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setRepoKind("workspace")} aria-pressed={repoKind === "workspace"}>本地仓库</button>
+                </div>
+              </div>
+              <div>
                 <label htmlFor="repo-name" className="text-sm font-medium">名称</label>
                 <input id="repo-name" className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={name} onChange={(event) => setName(event.target.value)} placeholder="仓库名称" />
               </div>
-              <div>
+              {repoKind === "remote" ? <div>
                 <label htmlFor="repo-git-url" className="text-sm font-medium">Git URL</label>
                 <input id="repo-git-url" className="flex h-9 w-full rounded-md border bg-background px-3 py-1 text-sm mt-1" value={gitUrl} onChange={(event) => setGitUrl(event.target.value)} placeholder="https://github.com/... 或 https://gitee.com/..." />
-              </div>
+              </div> : <div>
+                <label className="text-sm font-medium">本地工作区</label>
+                <div className="mt-1 flex gap-2">
+                  <Button type="button" variant="outline" onClick={() => void chooseLocalPath()}>选择目录</Button>
+                  <div className="min-w-0 flex-1 rounded-md border bg-muted/30 px-3 py-2 text-sm font-mono truncate">
+                    {localPath || "尚未选择本地工作区"}
+                  </div>
+                </div>
+              </div>}
             </div>
-            <p className="text-xs text-muted-foreground">添加后会同步仓库分支，发起审查时再选择目标分支。</p>
+            <p className="text-xs text-muted-foreground">{repoKind === "remote" ? "添加后会同步远程分支，发起审查时选择目标提交。" : "添加后可在发起审查时选择指定提交或未提交改动。"}</p>
             {formError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formError}</div>}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setShowForm(false)}>取消</Button>
-              <Button onClick={() => void handleSave()} disabled={saving || !name.trim() || !gitUrl.trim()}>
+              <Button onClick={() => void handleSave()} disabled={saving || !name.trim() || (repoKind === "remote" ? !gitUrl.trim() : !localPath.trim())}>
                 {saving ? "保存中..." : "保存"}
               </Button>
             </div>

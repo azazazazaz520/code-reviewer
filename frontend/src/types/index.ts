@@ -3,6 +3,10 @@ export interface Repo {
   name: string;
   git_url: string;
   local_path?: string;  // backend auto-fills, not shown/edited in UI
+  default_branch?: string | null;
+  last_synced_at?: string | null;
+  sync_status?: "never" | "syncing" | "ready" | "failed" | string;
+  sync_error?: string | null;
   created_at: string;
 }
 
@@ -11,11 +15,17 @@ export interface ReviewTask {
   repo_id: string;
   repo_name?: string;
   review_type: "pr" | "local";
+  source_type?: "pr" | "remote_latest" | "remote_commit" | "workspace" | string | null;
   pr_number: number | null;
   commit_hash: string | null;
   branch: string | null;
   base_branch: string | null;
-  status: "pending" | "running" | "done" | "failed";
+  head_revision: string | null;
+  base_revision: string | null;
+  workspace_target?: string | null;
+  workspace_fingerprint?: string | null;
+  workspace_stats_json?: string | null;
+  status: "pending" | "running" | "preparing" | "done" | "failed";
   risk_level?: string | null;
   error_message: string | null;
   reflection_rounds: number;
@@ -53,12 +63,15 @@ export interface ReviewReport {
 
 export interface ReviewChanges {
   review_type: "pr" | "local" | string;
+  source_type?: "pr" | "remote_latest" | "remote_commit" | "workspace" | string | null;
   pr_number: number | null;
   commit_hash: string | null;
   branch: string | null;
   base_branch: string | null;
   base_revision: string | null;
   head_revision: string | null;
+  workspace_fingerprint?: string | null;
+  workspace_stats?: Record<string, number> | null;
   changed_files: string[];
   diff: string;
 }
@@ -144,6 +157,17 @@ export interface CommitItem {
 
 export interface BranchItem {
   name: string;
+  head_revision?: string | null;
+  previous_revision?: string | null;
+  has_new_commits?: boolean;
+}
+
+export interface SyncResponse {
+  status: string;
+  checked_at: string;
+  default_branch: string | null;
+  branches: BranchItem[];
+  error?: string | null;
 }
 
 export interface ReviewLog {

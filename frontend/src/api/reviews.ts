@@ -2,7 +2,7 @@ import api from "./client";
 import type { ReviewTask, ReviewReportResponse, PRItem, CommitItem, ReviewLog } from "../types";
 
 export const reviewApi = {
-  submit: (repoId: string, data: { review_type: string; pr_number?: number; commit_hash?: string; branch?: string }) =>
+  submit: (repoId: string, data: { review_type?: string; source_type?: string; pr_number?: number; commit_hash?: string; branch?: string; workspace_path?: string; workspace_target?: string }) =>
     api.post<ReviewTask>(`/repos/${repoId}/reviews`, data),
   list: (repoId: string, includeArchived = false) => api.get<ReviewTask[]>(`/repos/${repoId}/reviews`, { params: { include_archived: includeArchived } }),
   status: (taskId: string) => api.get<ReviewTask>(`/reviews/${taskId}`),

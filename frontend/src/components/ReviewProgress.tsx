@@ -6,6 +6,7 @@ import type { ReviewLog } from "../types";
 import { formatErrorMessage } from "../lib/error-message";
 
 const stepLabels: Record<string, string> = {
+  prepare_source: "准备审查来源",
   load_pr: "获取代码变更",
   collect_context: "收集上下文",
   planning: "规划策略",

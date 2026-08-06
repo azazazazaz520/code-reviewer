@@ -43,19 +43,45 @@ class Base(DeclarativeBase):
     pass
 
 
-def ensure_schema() -> None:
-    """Apply additive SQLite changes for installations without migrations."""
-    if "sqlite" not in settings.database_url:
+def ensure_schema(target_engine=None) -> None:
+    """为未使用迁移工具的 SQLite 安装补充新增字段。"""
+    schema_engine = target_engine or engine
+    if schema_engine.dialect.name != "sqlite":
         return
 
-    inspector = inspect(engine)
-    if "review_tasks" not in inspector.get_table_names():
-        return
+    inspector = inspect(schema_engine)
+    table_additions = {
+        "repositories": {
+            "default_branch": "VARCHAR(200)",
+            "last_synced_at": "DATETIME",
+            "sync_status": "VARCHAR(20) NOT NULL DEFAULT 'never'",
+            "sync_error": "TEXT",
+        },
+        "review_tasks": {
+            "archived_at": "DATETIME",
+            "source_type": "VARCHAR(30)",
+            "source_path": "VARCHAR(1000)",
+            "workspace_target": "VARCHAR(30)",
+            "head_revision": "VARCHAR(40)",
+            "base_revision": "VARCHAR(40)",
+            "workspace_fingerprint": "VARCHAR(64)",
+            "workspace_stats_json": "TEXT",
+        },
+    }
+    existing_tables = set(inspector.get_table_names())
 
-    columns = {column["name"] for column in inspector.get_columns("review_tasks")}
-    if "archived_at" not in columns:
-        with engine.begin() as connection:
-            connection.execute(text("ALTER TABLE review_tasks ADD COLUMN archived_at DATETIME"))
+    with schema_engine.begin() as connection:
+        for table_name, additions in table_additions.items():
+            if table_name not in existing_tables:
+                continue
+            columns = {
+                column["name"] for column in inspector.get_columns(table_name)
+            }
+            for name, sql_type in additions.items():
+                if name not in columns:
+                    connection.execute(
+                        text(f"ALTER TABLE {table_name} ADD COLUMN {name} {sql_type}")
+                    )
 
 
 def get_db():
