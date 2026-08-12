@@ -1,3 +1,4 @@
+import os
 import subprocess
 import unittest
 from pathlib import Path
@@ -27,7 +28,7 @@ class ReviewSnapshotTest(unittest.TestCase):
             raise AssertionError(f"unexpected git command: {args}")
 
         with patch("app.engine.snapshot._run_git", side_effect=run_git), patch(
-            "app.engine.snapshot._run_git_raw", return_value="diff"
+            "app.engine.snapshot._run_git_bytes", return_value=b"diff"
         ), patch(
             "app.engine.snapshot._hash_workspace_path", return_value="file-hash"
         ):
@@ -181,6 +182,51 @@ class ReviewSnapshotTest(unittest.TestCase):
 
             self.assertFalse(worktree.exists())
             self.assertEqual(git("status", "--porcelain=v1"), before_status)
+
+    def test_workspace_snapshot_applies_lf_worktree_patch_on_windows(self):
+        if os.name != "nt":
+            self.skipTest("该回归场景验证 Windows 文本管道对 LF 补丁的影响")
+
+        with TemporaryDirectory(prefix="workspace-lf-patch-test-") as temp_dir:
+            repo = Path(temp_dir)
+
+            def git(*args: str) -> str:
+                result = subprocess.run(
+                    ["git", *args],
+                    cwd=repo,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                return result.stdout.strip()
+
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "test@example.com")
+            git("config", "user.name", "Snapshot Test")
+            (repo / ".gitattributes").write_text("* text eol=lf\n", encoding="utf-8")
+            (repo / "demo.txt").write_text("before\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "initial")
+
+            (repo / "demo.txt").write_text("after\n", encoding="utf-8")
+
+            snapshot = create_review_snapshot(
+                str(repo),
+                review_type="local",
+                source_type="workspace",
+                workspace_path=str(repo),
+            )
+            worktree = Path(snapshot.repo_root)
+            try:
+                self.assertEqual(
+                    (worktree / "demo.txt").read_text(encoding="utf-8"),
+                    "after\n",
+                )
+                self.assertEqual(snapshot.changed_files, ["demo.txt"])
+            finally:
+                snapshot.cleanup()
+
+            self.assertFalse(worktree.exists())
 
     def test_workspace_change_during_capture_is_rejected(self):
         with TemporaryDirectory(prefix="workspace-race-test-") as temp_dir:

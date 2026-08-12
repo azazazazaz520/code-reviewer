@@ -199,14 +199,14 @@ def _create_workspace_snapshot(
 @dataclass(frozen=True)
 class _WorkspaceState:
     fingerprint: str
-    diff: str
+    diff: bytes
     untracked_files: tuple[str, ...]
     stats: dict[str, int]
 
 
 def _capture_workspace_state(repo_path: str) -> _WorkspaceState:
     status = _run_git(repo_path, ["status", "--porcelain=v1", "-z", "--untracked-files=all"])
-    diff = _run_git_raw(repo_path, ["diff", "HEAD", "--binary", "--no-ext-diff"])
+    diff = _run_git_bytes(repo_path, ["diff", "HEAD", "--binary", "--no-ext-diff"])
     untracked = tuple(
         record[3:]
         for record in status.split("\0")
@@ -217,7 +217,7 @@ def _capture_workspace_state(repo_path: str) -> _WorkspaceState:
     digest = hashlib.sha256()
     digest.update(_run_git(repo_path, ["rev-parse", "HEAD"]).encode("utf-8"))
     digest.update(status.encode("utf-8", errors="replace"))
-    digest.update(diff.encode("utf-8", errors="replace"))
+    digest.update(diff)
     for relative in untracked:
         digest.update(relative.encode("utf-8", errors="surrogateescape"))
         digest.update(b"\0")
@@ -309,23 +309,20 @@ def _ensure_within(root: Path, path: Path) -> None:
         raise SnapshotError("工作区文件路径超出仓库根目录") from exc
 
 
-def _run_git_input(repo_path: str, args: list[str], payload: str) -> str:
+def _run_git_input(repo_path: str, args: list[str], payload: bytes) -> bytes:
     try:
         result = subprocess.run(
             ["git", "-C", repo_path, *args],
             input=payload,
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
             timeout=60,
         )
     except subprocess.TimeoutExpired as exc:
         raise SnapshotError(f"git 操作超时: {' '.join(args)}") from exc
     if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
+        detail = (result.stderr or result.stdout or b"").decode("utf-8", errors="replace").strip()
         raise SnapshotError(f"git {' '.join(args)} 失败: {detail[:500]}")
-    return result.stdout.strip()
+    return result.stdout
 
 
 def _repository_root(repo_path: str) -> str:
@@ -401,6 +398,26 @@ def _run_git_raw(repo_path: str, args: list[str], timeout: int = 60) -> str:
 
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
+        raise SnapshotError(f"git {' '.join(args)} 失败: {detail[:500]}")
+    return result.stdout
+
+
+def _run_git_bytes(repo_path: str, args: list[str], timeout: int = 60) -> bytes:
+    try:
+        result = subprocess.run(
+            ["git", "-C", repo_path, *args],
+            capture_output=True,
+            timeout=timeout,
+        )
+    except FileNotFoundError as exc:
+        raise SnapshotError("git not found on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise SnapshotError(f"git 操作超时: {' '.join(args)}") from exc
+
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or b"").decode(
+            "utf-8", errors="replace"
+        ).strip()
         raise SnapshotError(f"git {' '.join(args)} 失败: {detail[:500]}")
     return result.stdout
 
