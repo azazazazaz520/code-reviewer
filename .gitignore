@@ -218,7 +218,16 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-backend/data/code_reviewer.db
+
+# Local application runtime data
+/data/*.db*
+/data/repos/
+/backend/data/*.db*
+/backend/data/repos/
+
+# Personal agent settings
+/.claude/settings.local.json
+
 .code-review-graph/
 
 .codegraph/
