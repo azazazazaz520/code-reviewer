@@ -165,6 +165,111 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(len(accepted), 1)
         self.assertEqual(accepted[0]["evidence_type"], "reviewer_context")
 
+    def test_finding_gate_merges_same_location_similar_titles(self):
+        diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
++value = 1
+ value += 1
+"""
+        findings = [
+            {
+                "severity": "high",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "OAuth 回调缺少 state 参数校验",
+                "reason": "回调未校验 state，存在 CSRF 风险。",
+                "suggestion": "校验 state 参数。",
+            },
+            {
+                "severity": "medium",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "OAuth 回调缺少状态参数验证",
+                "reason": "缺少 state 校验。",
+                "suggestion": "校验 state。",
+            },
+            {
+                "severity": "medium",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "OAuth 回调缺少错误处理",
+                "reason": "错误被静默吞掉。",
+                "suggestion": "补充错误处理。",
+            },
+        ]
+
+        accepted = filter_findings(findings, ["src/app.py"], diff)
+
+        # 同位置语义重复的两条只保留一条，不同问题保留。
+        self.assertEqual(len(accepted), 2)
+        titles = {f["title"] for f in accepted}
+        self.assertIn("OAuth 回调缺少 state 参数校验", titles)
+        self.assertIn("OAuth 回调缺少错误处理", titles)
+
+    def test_finding_gate_merges_normalised_title_duplicates(self):
+        diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
++value = 1
+ value += 1
+"""
+        findings = [
+            {
+                "severity": "low",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "HTTP response body size limit is hardcoded",
+                "reason": "原因一",
+                "suggestion": "建议一",
+            },
+            {
+                "severity": "low",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "HTTP response body size limit hardcoded!",
+                "reason": "原因二",
+                "suggestion": "建议二",
+            },
+        ]
+
+        accepted = filter_findings(findings, ["src/app.py"], diff)
+
+        self.assertEqual(len(accepted), 1)
+
+    def test_finding_gate_keeps_distinct_problems_at_same_location(self):
+        diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
++value = 1
+ value += 1
+"""
+        findings = [
+            {
+                "severity": "low",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "OAuth 回调缺少 state 参数校验",
+                "reason": "原因一",
+                "suggestion": "建议一",
+            },
+            {
+                "severity": "low",
+                "file": "src/app.py",
+                "line": 1,
+                "title": "Token refresh failure returns original error",
+                "reason": "原因二",
+                "suggestion": "建议二",
+            },
+        ]
+
+        accepted = filter_findings(findings, ["src/app.py"], diff)
+
+        self.assertEqual(len(accepted), 2)
+
     def test_release_only_commit_produces_checks_without_llm_findings(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)

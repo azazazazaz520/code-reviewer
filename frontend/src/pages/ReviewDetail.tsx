@@ -54,6 +54,17 @@ function groupFindingsBySeverity(findings: Finding[]) {
   return groups;
 }
 
+function groupFindingsByLocation(findings: Finding[]) {
+  const groups = new Map<string, Finding[]>();
+  for (const f of findings) {
+    const key = `${f.file}#${f.line}`;
+    const list = groups.get(key);
+    if (list) list.push(f);
+    else groups.set(key, [f]);
+  }
+  return [...groups.entries()];
+}
+
 export default function ReviewDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -618,12 +629,29 @@ export default function ReviewDetail() {
       ) : (
         filteredEntries.map(([severity, findings]) => (
           <div key={severity} className="space-y-2">
-            {findings.map((f, i) => (
-              <FindingCard
-                key={`${f.file}-${f.line}-${i}`}
-                finding={f}
-                defaultOpen={severity === "critical" || severity === "high"}
-              />
+            {groupFindingsByLocation(findings).map(([locationKey, group]) => (
+              <div key={locationKey} className="space-y-1">
+                <FindingCard
+                  finding={group[0]}
+                  defaultOpen={severity === "critical" || severity === "high"}
+                />
+                {group.length > 1 && (
+                  <details className="rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                    <summary className="cursor-pointer text-xs">
+                      同位置另有 {group.length - 1} 条相关意见
+                    </summary>
+                    <div className="mt-2 space-y-1">
+                      {group.slice(1).map((f, i) => (
+                        <FindingCard
+                          key={`${locationKey}-${i}`}
+                          finding={f}
+                          defaultOpen={false}
+                        />
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </div>
             ))}
           </div>
         ))
