@@ -5,6 +5,7 @@ import RepoList from "./pages/RepoList";
 import RepoDetail from "./pages/RepoDetail";
 import ReviewDetail from "./pages/ReviewDetail";
 import PromptWorkbench from "./pages/PromptWorkbench";
+import Settings from "./pages/Settings";
 
 function App() {
   return (
@@ -16,6 +17,7 @@ function App() {
           <Route path="/repos/:id" element={<RepoDetail />} />
           <Route path="/reviews/:id" element={<ReviewDetail />} />
           <Route path="/prompts" element={<PromptWorkbench />} />
+          <Route path="/settings" element={<Settings />} />
         </Route>
       </Routes>
     </BrowserRouter>

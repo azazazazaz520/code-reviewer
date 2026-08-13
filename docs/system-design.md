@@ -241,6 +241,7 @@ E:\code-reviewer\
 | `/repos/:id` | RepoDetail | 仓库详情 + 审查提交 |
 | `/reviews/:id` | ReviewDetail | 审查报告 |
 | `/prompts` | PromptWorkbench | 提示词优化工作台 |
+| `/settings` | Settings | 统一设置与本机运行状态（P0 只读） |
 
 ### Dashboard（首页）
 
@@ -341,6 +342,12 @@ Backend: 存入 review_reports 表，更新 task status=done
     ▼
 Frontend: 轮询到 status=done → GET /api/reviews/{id}/report → 渲染报告
 ```
+
+### Settings（设置）
+
+设置页通过 `GET /api/settings` 读取当前后端进程已经生效的脱敏配置快照，展示模型服务、代码托管凭据状态、审查行为、提示词工作台限制、数据目录和运行模式。主题属于前端本地偏好，使用浏览器本地存储并立即生效。
+
+P0 只读快照不返回 API Key、GitHub Token 或 Gitee Token 的内容，也不写入非敏感配置。Electron 模式通过 preload 白名单读取数据目录和 sidecar 状态；浏览器模式明确展示本地路径能力限制。配置持久化、连接测试、凭据管理和 sidecar 重启按设置实施方案分阶段实现。
 
 ## 下一步实施顺序
 
