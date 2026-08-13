@@ -164,3 +164,14 @@
 @utility border-l-severity-high { border-left-color: var(--severity-high); }
 @utility border-l-severity-medium { border-left-color: var(--severity-medium); }
 @utility border-l-severity-low { border-left-color: var(--severity-low); }
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}

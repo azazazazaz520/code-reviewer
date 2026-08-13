@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, Trash2, TriangleAlert } from "lucide-react";
+import { Archive, ArchiveRestore, ChevronLeft, Trash2 } from "lucide-react";
 import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
 import { reviewApi } from "../api/reviews";
 import { Badge } from "../components/ui/badge";
@@ -9,9 +9,11 @@ import { Separator } from "../components/ui/separator";
 import { Skeleton } from "../components/ui/skeleton";
 import FindingCard from "../components/FindingCard";
 import ReviewProgress from "../components/ReviewProgress";
+import ReviewHeader from "../components/ReviewHeader";
+import ErrorNotice from "../components/ErrorNotice";
 import ChangeDiffViewer from "../components/ChangeDiffViewer";
 import { getSeverityConfig } from "../lib/severity";
-import { formatErrorMessage, formatReviewerName } from "../lib/error-message";
+import { formatErrorMessage, formatReviewerName, toUserError, type UserErrorInfo } from "../utils/error-message";
 import {
   BarChart,
   Bar,
@@ -75,10 +77,12 @@ export default function ReviewDetail() {
   const [logs, setLogs] = useState<ReviewLog[]>([]);
   const [logPolling, setLogPolling] = useState(true);
   const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [reportError, setReportError] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<UserErrorInfo | null>(null);
+  const [reportError, setReportError] = useState<UserErrorInfo | null>(null);
+  const [actionError, setActionError] = useState<UserErrorInfo | null>(null);
   const [actionPending, setActionPending] = useState(false);
+  const taskRef = useRef<ReviewTask | null>(null);
+  const reportRef = useRef<ReviewReport | null>(null);
 
   const fetchAll = useCallback(async () => {
     if (!id) return;
@@ -99,15 +103,19 @@ export default function ReviewDetail() {
       logsResult.status === "rejected"
     ) {
       setLoading(false);
-      if (!task && !report) {
-        setLoadError("无法读取审查状态，请检查后端服务后重试");
+      if (!taskRef.current && !reportRef.current) {
+        setLoadError(toUserError(statusResult.reason, "无法读取审查状态，请检查后端服务后重试"));
       }
       return;
     }
 
-    if (status) setTask(status);
+    if (status) {
+      taskRef.current = status;
+      setTask(status);
+    }
 
     if (reportResponse?.report) {
+      reportRef.current = reportResponse.report;
       setReport(reportResponse.report);
       setReportError(null);
     }
@@ -123,9 +131,9 @@ export default function ReviewDetail() {
       setPolling(false);
       setLogPolling(false);
       if (reportResult.status === "rejected") {
-        setReportError("审查已结束，但报告读取失败，请稍后重试");
+        setReportError(toUserError(reportResult.reason, "审查已结束，但报告读取失败，请稍后重试"));
       } else if (!reportResponse?.report && terminalStatus === "done") {
-        setReportError("审查已结束，但报告记录不可用");
+        setReportError(toUserError(null, "审查已结束，但报告记录不可用"));
       }
     }
 
@@ -145,11 +153,13 @@ export default function ReviewDetail() {
   useEffect(() => {
     if (!id) {
       setLoading(false);
-      setLoadError("缺少审查任务 ID");
+      setLoadError(toUserError(null, "缺少审查任务 ID"));
       return;
     }
     setTask(null);
     setReport(null);
+    taskRef.current = null;
+    reportRef.current = null;
     setLogs([]);
     setPolling(true);
     setLogPolling(true);
@@ -176,6 +186,13 @@ export default function ReviewDetail() {
     void fetchAll();
   };
 
+  const page = (content: ReactNode, fallbackStatus?: string) => (
+    <div className="space-y-4">
+      <ReviewHeader task={task} report={report} fallbackStatus={fallbackStatus} />
+      {content}
+    </div>
+  );
+
   const manageReview = async (action: "archive" | "restore" | "delete") => {
     if (!task) return;
     if (action === "delete" && !window.confirm("永久删除这条审查记录？报告、日志和变更快照也会一并删除，无法恢复。")) {
@@ -192,94 +209,79 @@ export default function ReviewDetail() {
         return;
       }
       const refreshed = await reviewApi.status(task.id);
+      taskRef.current = refreshed.data;
       setTask(refreshed.data);
     } catch (error) {
-      const responseError = error as { response?: { data?: { detail?: string } }; message?: string };
-      setActionError(responseError.response?.data?.detail || responseError.message || "更新审查记录失败");
+      setActionError(toUserError(error, "更新审查记录失败"));
     } finally {
       setActionPending(false);
     }
   };
 
   if (loading) {
-    return (
-      <div className="space-y-4">
+    return page(
+      <>
         <Skeleton className="h-8 w-24" />
         <Skeleton className="h-12 w-full" />
         <Skeleton className="h-64 w-full" />
-      </div>
+      </>,
+      "loading",
     );
   }
 
   // ── Still polling, no report yet ──
   if (!report && polling) {
-    return <ReviewProgress logs={logs} logPolling={logPolling} />;
+    return page(<ReviewProgress logs={logs} logPolling={logPolling} />);
   }
 
   // ── Failed state ──
   if (!report && !polling && task?.status === "failed") {
-    return (
-      <div className="space-y-4">
+    return page(
+      <>
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
-          <h2 className="text-lg font-semibold text-destructive flex items-center gap-2">
-            <TriangleAlert className="h-5 w-5" />
-            审查失败
-          </h2>
-          <p className="text-destructive/80 mt-2">
-            {formatErrorMessage(task.error_message)}
-          </p>
-          <Button className="mt-4" variant="outline" onClick={retry}>重新加载</Button>
-        </div>
-      </div>
+        <ErrorNotice
+          title="审查失败"
+          error={toUserError(task.error_message, "审查失败，请查看审查日志后重试")}
+          onRetry={retry}
+        />
+      </>,
+      "failed",
     );
   }
 
   if (!report && !polling && reportError) {
-    return (
-      <div className="space-y-4">
+    return page(
+      <>
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6">
-          <h2 className="text-lg font-semibold text-destructive flex items-center gap-2">
-            <TriangleAlert className="h-5 w-5" />
-            报告不可用
-          </h2>
-          <p className="text-destructive/80 mt-2">{reportError}</p>
-          <Button className="mt-4" variant="outline" onClick={retry}>重试</Button>
-        </div>
-      </div>
+        <ErrorNotice title="报告不可用" error={reportError} onRetry={retry} />
+      </>,
+      "unavailable",
     );
   }
 
   if (loadError && !task && !report) {
-    return (
-      <div className="space-y-4">
+    return page(
+      <>
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           返回
         </Button>
-        <div className="rounded-lg border border-destructive/50 bg-destructive/5 p-6 text-center">
-          <h2 className="text-lg font-semibold text-destructive flex items-center justify-center gap-2">
-            <TriangleAlert className="h-5 w-5" />
-            审查状态不可用
-          </h2>
-          <p className="text-destructive/80 mt-2">{loadError}</p>
-          <Button className="mt-4" variant="outline" onClick={retry}>重试</Button>
-        </div>
-      </div>
+        <ErrorNotice title="审查状态不可用" error={loadError} onRetry={retry} />
+      </>,
+      "unavailable",
     );
   }
 
   // ── No report, not polling, not failed ──
   if (!report && !polling && task?.status !== "failed") {
-    return (
-      <div className="space-y-4">
+    return page(
+      <>
         <Button variant="ghost" onClick={() => navigate(-1)}>
           <ChevronLeft className="h-4 w-4 mr-1" />
           返回
@@ -287,11 +289,12 @@ export default function ReviewDetail() {
         <div className="rounded-lg border p-6 text-center text-muted-foreground">
           未找到报告
         </div>
-      </div>
+      </>,
+      "unavailable",
     );
   }
 
-  if (!report) return null;
+  if (!report) return page(<ErrorNotice title="报告不可用" error={toUserError(null, "当前没有可展示的报告")} onRetry={retry} />, "unavailable");
 
   const grouped = groupFindingsBySeverity(report.findings);
   const severityEntries = Object.entries(grouped).filter(
@@ -330,7 +333,7 @@ export default function ReviewDetail() {
     ([, f]) => f.length > 0,
   );
 
-  return (
+  return page(
     <div className="space-y-4">
       {/* Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -341,15 +344,15 @@ export default function ReviewDetail() {
         {task && (
           <div className="flex flex-wrap items-center gap-2">
             {task.archived_at ? (
-              <Button variant="outline" size="sm" disabled={actionPending} onClick={() => void manageReview("restore")}><ArchiveRestore className="mr-1 h-4 w-4" />恢复记录</Button>
+              <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending} onClick={() => void manageReview("restore")}><ArchiveRestore className="mr-1 h-4 w-4" />恢复记录</Button>
             ) : (
-              <Button variant="outline" size="sm" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
+              <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
             )}
-            <Button variant="destructive" size="sm" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
+            <Button variant="destructive" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
           </div>
         )}
       </div>
-      {actionError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{actionError}</div>}
+      {actionError && <ErrorNotice error={actionError} compact />}
 
       {/* Progress log (if not polling) */}
       {report && logs.length > 0 && !polling && (
@@ -656,6 +659,6 @@ export default function ReviewDetail() {
           </div>
         ))
       )}
-    </div>
+    </div>,
   );
 }

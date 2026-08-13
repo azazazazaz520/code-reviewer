@@ -18,6 +18,8 @@ import {
 } from "../components/ui/table";
 import ReviewHeatmap from "../components/ReviewHeatmap";
 import SubmitReviewModal from "../components/SubmitReviewModal";
+import ErrorNotice from "../components/ErrorNotice";
+import { toUserError, type UserErrorInfo } from "../utils/error-message";
 
 const riskBadge: Record<string, "critical" | "high" | "medium" | "low"> = {
   low: "low",
@@ -29,6 +31,7 @@ const riskBadge: Record<string, "critical" | "high" | "medium" | "low"> = {
 const statusLabel: Record<string, string> = {
   pending: "等待中",
   running: "进行中",
+  preparing: "准备中",
   done: "完成",
   failed: "失败",
 };
@@ -39,16 +42,11 @@ export default function Dashboard() {
   const [modalOpen, setModalOpen] = useState(false);
   const navigate = useNavigate();
 
-  const [statsError, setStatsError] = useState<string | null>(null);
-  const [heatmapError, setHeatmapError] = useState<string | null>(null);
+  const [statsError, setStatsError] = useState<UserErrorInfo | null>(null);
+  const [heatmapError, setHeatmapError] = useState<UserErrorInfo | null>(null);
   const [statsLoading, setStatsLoading] = useState(true);
   const [actionPendingId, setActionPendingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const getErrorMessage = (error: unknown, fallback: string) => {
-    const responseError = error as { response?: { data?: { detail?: string } }; message?: string };
-    return responseError.response?.data?.detail || responseError.message || fallback;
-  };
+  const [actionError, setActionError] = useState<UserErrorInfo | null>(null);
 
   const loadStats = useCallback(async () => {
     setStatsLoading(true);
@@ -58,7 +56,7 @@ export default function Dashboard() {
       setStats(res.data);
     } catch (error) {
       console.error("Failed to load dashboard stats:", error);
-      setStatsError(getErrorMessage(error, "无法加载仪表盘数据"));
+      setStatsError(toUserError(error, "无法加载仪表盘数据"));
     } finally {
       setStatsLoading(false);
     }
@@ -70,7 +68,7 @@ export default function Dashboard() {
       const res = await statsApi.heatmap();
       setHeatmap(res.data);
     } catch (error) {
-      setHeatmapError(getErrorMessage(error, "无法加载审查活动数据"));
+      setHeatmapError(toUserError(error, "无法加载审查活动数据"));
     }
   }, []);
 
@@ -83,7 +81,7 @@ export default function Dashboard() {
       await reviewApi.archive(review.id);
       await Promise.all([loadStats(), loadHeatmap()]);
     } catch (error) {
-      setActionError(getErrorMessage(error, "归档审查记录失败"));
+      setActionError(toUserError(error, "归档审查记录失败"));
     } finally {
       setActionPendingId(null);
     }
@@ -97,11 +95,7 @@ export default function Dashboard() {
   if (statsError && !stats) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-4">
-        <div className="text-destructive text-lg font-semibold">加载失败</div>
-        <div className="text-muted-foreground text-sm">{statsError}</div>
-        <Button variant="outline" onClick={() => void loadStats()}>
-          重试
-        </Button>
+        <ErrorNotice title="仪表盘加载失败" error={statsError} onRetry={() => void loadStats()} />
       </div>
     );
   }
@@ -144,7 +138,7 @@ export default function Dashboard() {
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold tracking-tight">仪表盘</h1>
-        <Button className="w-full sm:w-auto" onClick={() => setModalOpen(true)}>
+        <Button className="min-h-11 w-full sm:w-auto" onClick={() => setModalOpen(true)}>
           <Plus className="h-4 w-4 mr-1" />
           发起审查
         </Button>
@@ -179,12 +173,7 @@ export default function Dashboard() {
         </CardHeader>
         <CardContent>
           {heatmapError ? (
-            <div className="flex flex-col items-center gap-3 py-6 text-center">
-              <div className="text-sm text-destructive">{heatmapError}</div>
-              <Button variant="outline" size="sm" onClick={() => void loadHeatmap()}>
-                重试加载
-              </Button>
-            </div>
+            <ErrorNotice title="审查活动加载失败" error={heatmapError} onRetry={() => void loadHeatmap()} compact />
           ) : (
             <ReviewHeatmap
               data={heatmap}
@@ -202,9 +191,7 @@ export default function Dashboard() {
           <CardTitle className="text-base">最近审查</CardTitle>
         </CardHeader>
         {actionError && (
-          <div role="alert" className="mx-6 mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-            {actionError}
-          </div>
+          <ErrorNotice error={actionError} compact className="mx-6 mb-3" />
         )}
         <CardContent className="p-0">
           <Table className="min-w-[760px]">
@@ -265,7 +252,7 @@ export default function Dashboard() {
                         <Button
                           variant="link"
                           size="sm"
-                          className="h-auto p-0"
+                          className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0"
                           onClick={() => navigate(`/reviews/${r.id}`)}
                         >
                           查看详情
@@ -273,7 +260,7 @@ export default function Dashboard() {
                         <Button
                           variant="link"
                           size="sm"
-                          className="h-auto p-0"
+                          className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0"
                           disabled={actionPendingId === r.id || r.status === "pending" || r.status === "running"}
                           onClick={() => void handleArchive(r)}
                         >

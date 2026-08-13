@@ -14,14 +14,9 @@ import {
   TableRow,
 } from "../components/ui/table";
 import SubmitReviewModal from "../components/SubmitReviewModal";
-
-function getErrorMessage(error: unknown, fallback: string) {
-  const responseError = error as {
-    response?: { data?: { detail?: string } };
-    message?: string;
-  };
-  return responseError.response?.data?.detail || responseError.message || fallback;
-}
+import ErrorNotice from "../components/ErrorNotice";
+import { toUserError, type UserErrorInfo } from "../utils/error-message";
+import { Modal } from "../components/ui/modal";
 
 export default function RepoList() {
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -30,8 +25,8 @@ export default function RepoList() {
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [error, setError] = useState<UserErrorInfo | null>(null);
+  const [formError, setFormError] = useState<UserErrorInfo | null>(null);
 
   const [name, setName] = useState("");
   const [gitUrl, setGitUrl] = useState("");
@@ -48,7 +43,7 @@ export default function RepoList() {
       const res = await repoApi.list();
       setRepos(res.data);
     } catch (loadError) {
-      setError(getErrorMessage(loadError, "无法加载仓库列表"));
+      setError(toUserError(loadError, "无法加载仓库列表"));
     } finally {
       setLoading(false);
     }
@@ -105,7 +100,7 @@ export default function RepoList() {
       setShowForm(false);
       await load();
     } catch (saveError) {
-      setFormError(getErrorMessage(saveError, "保存仓库失败"));
+      setFormError(toUserError(saveError, "保存仓库失败"));
     } finally {
       setSaving(false);
     }
@@ -113,7 +108,7 @@ export default function RepoList() {
 
   const chooseLocalPath = async () => {
     if (!window.desktop) {
-      setFormError("添加本地仓库需要使用桌面应用");
+      setFormError(toUserError(null, "添加本地仓库需要使用桌面应用"));
       return;
     }
     const selected = await window.desktop.chooseDirectory();
@@ -129,7 +124,7 @@ export default function RepoList() {
       setConfirmDelete(null);
       await load();
     } catch (deleteError) {
-      setError(getErrorMessage(deleteError, "删除仓库失败"));
+      setError(toUserError(deleteError, "删除仓库失败"));
     }
   };
 
@@ -138,11 +133,11 @@ export default function RepoList() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-2xl font-bold tracking-tight">仓库管理</h1>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button className="w-full sm:w-auto" onClick={() => setReviewModalOpen(true)}>
+            <Button className="min-h-11 w-full sm:w-auto" onClick={() => setReviewModalOpen(true)}>
             <Plus className="h-4 w-4 mr-1" />
             发起审查
           </Button>
-          <Button className="w-full sm:w-auto" variant="outline" onClick={openAdd}>
+          <Button className="min-h-11 w-full sm:w-auto" variant="outline" onClick={openAdd}>
             <Plus className="h-4 w-4 mr-1" />
             添加仓库
           </Button>
@@ -153,8 +148,7 @@ export default function RepoList() {
         <CardContent className="p-0">
           {error && (
             <div className="flex items-center justify-between gap-4 border-b border-destructive/30 bg-destructive/5 px-6 py-3 text-sm">
-              <span className="text-destructive">{error}</span>
-              <Button variant="outline" size="sm" onClick={() => void load()}>重试</Button>
+              <ErrorNotice error={error} onRetry={() => void load()} compact className="w-full" />
             </div>
           )}
           <Table className="min-w-[680px]">
@@ -185,17 +179,17 @@ export default function RepoList() {
                     </TableCell>
                     <TableCell className="px-6 py-3 text-right">
                       <div className="flex items-center justify-end gap-3">
-                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => navigate(`/repos/${repo.id}`)}>详情</Button>
-                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => openEdit(repo)}>编辑</Button>
+                        <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" onClick={() => navigate(`/repos/${repo.id}`)}>详情</Button>
+                        <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" onClick={() => openEdit(repo)}>编辑</Button>
                         {confirmDelete === repo.id ? (
                           <span className="text-sm">
                             确定？{" "}
-                            <Button variant="link" size="sm" className="h-auto p-0 text-destructive" onClick={() => void handleDelete(repo.id)}>删除</Button>
+                            <Button variant="link" size="sm" className="min-h-11 px-2 text-destructive sm:min-h-0 sm:h-auto sm:p-0" onClick={() => void handleDelete(repo.id)}>删除</Button>
                             {" "}/{" "}
-                            <Button variant="link" size="sm" className="h-auto p-0" onClick={() => setConfirmDelete(null)}>取消</Button>
+                            <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" onClick={() => setConfirmDelete(null)}>取消</Button>
                           </span>
                         ) : (
-                          <Button variant="link" size="sm" className="h-auto p-0 text-destructive" onClick={() => setConfirmDelete(repo.id)}>删除</Button>
+                          <Button variant="link" size="sm" className="min-h-11 px-2 text-destructive sm:min-h-0 sm:h-auto sm:p-0" onClick={() => setConfirmDelete(repo.id)}>删除</Button>
                         )}
                       </div>
                     </TableCell>
@@ -207,18 +201,10 @@ export default function RepoList() {
         </CardContent>
       </Card>
 
-      {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowForm(false)}>
-          <div
-            className="bg-card border rounded-lg shadow-lg w-full max-w-md p-6 space-y-4"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="repo-form-title"
-            onClick={(event) => event.stopPropagation()}
-          >
+      {showForm && <Modal open={showForm} onClose={() => setShowForm(false)} titleId="repo-form-title" panelClassName="max-w-md space-y-4">
             <div className="flex items-center justify-between gap-4">
               <h2 id="repo-form-title" className="text-lg font-semibold">{editing ? "编辑仓库" : "添加仓库"}</h2>
-              <Button variant="ghost" size="icon" aria-label="关闭仓库表单" onClick={() => setShowForm(false)}>
+              <Button variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="关闭仓库表单" onClick={() => setShowForm(false)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -240,7 +226,7 @@ export default function RepoList() {
               </div> : <div>
                 <label className="text-sm font-medium">本地工作区</label>
                 <div className="mt-1 flex gap-2">
-                  <Button type="button" variant="outline" onClick={() => void chooseLocalPath()}>选择目录</Button>
+                  <Button type="button" variant="outline" className="min-h-11" onClick={() => void chooseLocalPath()}>选择目录</Button>
                   <div className="min-w-0 flex-1 rounded-md border bg-muted/30 px-3 py-2 text-sm font-mono truncate">
                     {localPath || "尚未选择本地工作区"}
                   </div>
@@ -248,16 +234,14 @@ export default function RepoList() {
               </div>}
             </div>
             <p className="text-xs text-muted-foreground">{repoKind === "remote" ? "添加后会同步远程分支，发起审查时选择目标提交。" : "添加后可在发起审查时选择指定提交或未提交改动。"}</p>
-            {formError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{formError}</div>}
+            {formError && <ErrorNotice error={formError} compact />}
             <div className="flex justify-end gap-2 pt-2">
-              <Button variant="outline" onClick={() => setShowForm(false)}>取消</Button>
-              <Button onClick={() => void handleSave()} disabled={saving || !name.trim() || (repoKind === "remote" ? !gitUrl.trim() : !localPath.trim())}>
+              <Button variant="outline" className="min-h-11" onClick={() => setShowForm(false)}>取消</Button>
+              <Button className="min-h-11" onClick={() => void handleSave()} disabled={saving || !name.trim() || (repoKind === "remote" ? !gitUrl.trim() : !localPath.trim())}>
                 {saving ? "保存中..." : "保存"}
               </Button>
             </div>
-          </div>
-        </div>
-      )}
+      </Modal>}
 
       <SubmitReviewModal open={reviewModalOpen} onClose={() => setReviewModalOpen(false)} />
     </div>

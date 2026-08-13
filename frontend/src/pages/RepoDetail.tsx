@@ -16,6 +16,8 @@ import {
   TableRow,
 } from "../components/ui/table";
 import SubmitReviewModal from "../components/SubmitReviewModal";
+import ErrorNotice from "../components/ErrorNotice";
+import { toUserError, type UserErrorInfo } from "../utils/error-message";
 
 const statusVariant: Record<string, "default" | "secondary" | "low" | "destructive"> = {
   done: "low",
@@ -31,14 +33,6 @@ const statusLabel: Record<string, string> = {
   preparing: "准备审查中",
   running: "进行中",
 };
-
-function getErrorMessage(error: unknown, fallback: string) {
-  const responseError = error as {
-    response?: { data?: { detail?: string } };
-    message?: string;
-  };
-  return responseError.response?.data?.detail || responseError.message || fallback;
-}
 
 function getPullRequestLabel(gitUrl: string) {
   return gitUrl.toLowerCase().includes("gitee.com") ? "Gitee PR" : "GitHub PR";
@@ -59,19 +53,20 @@ export default function RepoDetail() {
   const [tasks, setTasks] = useState<ReviewTask[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [actionPendingId, setActionPendingId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<UserErrorInfo | null>(null);
   const [branches, setBranches] = useState<string[]>([]);
-  const [branchError, setBranchError] = useState<string | null>(null);
+  const [branchError, setBranchError] = useState<UserErrorInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [syncing, setSyncing] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<UserErrorInfo | null>(null);
+  const [historyError, setHistoryError] = useState<UserErrorInfo | null>(null);
 
   const [reviewType, setReviewType] = useState<"local" | "pr">("local");
   const [branch, setBranch] = useState("");
   const [prNumber, setPrNumber] = useState("");
   const [commitHash, setCommitHash] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitError, setSubmitError] = useState<UserErrorInfo | null>(null);
 
   const [reviewModalOpen, setReviewModalOpen] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -80,6 +75,7 @@ export default function RepoDetail() {
     if (!id) return;
     setLoading(true);
     setLoadError(null);
+    setHistoryError(null);
     setBranchError(null);
     const [repoResult, taskResult, branchResult] = await Promise.allSettled([
       repoApi.get(id),
@@ -90,17 +86,17 @@ export default function RepoDetail() {
     if (repoResult.status === "fulfilled") {
       setRepo(repoResult.value.data);
     } else {
-      setLoadError(getErrorMessage(repoResult.reason, "无法加载仓库信息"));
+      setLoadError(toUserError(repoResult.reason, "无法加载仓库信息"));
     }
     if (taskResult.status === "fulfilled") {
       setTasks(taskResult.value.data);
     } else {
-      setLoadError((current) => current || getErrorMessage(taskResult.reason, "无法加载审查历史"));
+      setHistoryError(toUserError(taskResult.reason, "无法加载审查历史"));
     }
     if (branchResult.status === "fulfilled") {
       setBranches(branchResult.value.data.map((item) => item.name));
     } else {
-      setBranchError(getErrorMessage(branchResult.reason, "无法加载分支列表"));
+      setBranchError(toUserError(branchResult.reason, "无法加载分支列表"));
     }
     setLoading(false);
   };
@@ -121,7 +117,7 @@ export default function RepoDetail() {
       if (action === "delete") await reviewApi.remove(task.id);
       await load(showArchived);
     } catch (error) {
-      setActionError(getErrorMessage(error, "更新审查记录失败"));
+      setActionError(toUserError(error, "更新审查记录失败"));
     } finally {
       setActionPendingId(null);
     }
@@ -130,11 +126,11 @@ export default function RepoDetail() {
   const handleSubmit = async () => {
     if (!id) return;
     if (reviewType === "pr" && !prNumber) {
-      setSubmitError("请输入 PR 编号");
+      setSubmitError(toUserError(null, "请输入 PR 编号"));
       return;
     }
     if (reviewType === "local" && !branch && !commitHash) {
-      setSubmitError("请选择审查分支，或输入 Commit Hash");
+      setSubmitError(toUserError(null, "请选择审查分支，或输入 Commit Hash"));
       return;
     }
 
@@ -149,7 +145,7 @@ export default function RepoDetail() {
       });
       navigate(`/reviews/${response.data.id}`);
     } catch (error) {
-      setSubmitError(getErrorMessage(error, "提交审查失败"));
+      setSubmitError(toUserError(error, "提交审查失败"));
     } finally {
       setSubmitting(false);
     }
@@ -170,7 +166,7 @@ export default function RepoDetail() {
         sync_error: null,
       } : current);
     } catch (error) {
-      setBranchError(getErrorMessage(error, "同步远程分支失败"));
+      setBranchError(toUserError(error, "同步远程分支失败"));
     } finally {
       setSyncing(false);
     }
@@ -182,7 +178,7 @@ export default function RepoDetail() {
       await repoApi.remove(id);
       navigate("/repos");
     } catch (error) {
-      setLoadError(getErrorMessage(error, "删除仓库失败"));
+      setLoadError(toUserError(error, "删除仓库失败"));
     }
   };
 
@@ -210,8 +206,7 @@ export default function RepoDetail() {
         </Button>
         <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-6 text-center">
           <div className="font-medium text-destructive">加载失败</div>
-          <p className="mt-2 text-sm text-muted-foreground">{loadError || "仓库不存在"}</p>
-          <Button className="mt-4" variant="outline" onClick={() => void load()}>重试</Button>
+          {loadError ? <ErrorNotice error={loadError} onRetry={() => void load()} /> : <p className="mt-2 text-sm text-muted-foreground">仓库不存在</p>}
         </div>
       </div>
     );
@@ -229,11 +224,11 @@ export default function RepoDetail() {
           <p className="mt-1 break-all text-sm text-muted-foreground">{repo.git_url}</p>
         </div>
         <div className="flex w-full gap-2 sm:w-auto">
-          <Button variant="outline" className="flex-1 sm:flex-none" onClick={() => void handleSync()} disabled={syncing}>
+          <Button variant="outline" className="min-h-11 flex-1 sm:flex-none" onClick={() => void handleSync()} disabled={syncing}>
             <RefreshCw className={`mr-1 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
             {syncing ? "同步中..." : "同步远程分支"}
           </Button>
-          <Button className="flex-1 sm:flex-none" onClick={() => setReviewModalOpen(true)}>发起审查</Button>
+          <Button className="min-h-11 flex-1 sm:flex-none" onClick={() => setReviewModalOpen(true)}>发起审查</Button>
         </div>
       </div>
       <p className="text-xs text-muted-foreground">
@@ -270,7 +265,7 @@ export default function RepoDetail() {
                   <option value="">选择分支</option>
                   {branches.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
-                {branchError && <p className="mt-1 text-xs text-destructive">{branchError}</p>}
+          {branchError && <ErrorNotice error={branchError} compact className="mt-1" />}
               </div>
             ) : (
               <div>
@@ -288,7 +283,7 @@ export default function RepoDetail() {
               {submitting ? "提交中..." : "提交审查"}
             </Button>
           </div>
-          {submitError && <div role="alert" className="mt-4 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{submitError}</div>}
+          {submitError && <ErrorNotice error={submitError} className="mt-4" />}
           {reviewType === "local" && !branchError && <p className="mt-3 text-xs text-muted-foreground">选择分支后留空 Commit Hash，将审查该分支当前最新提交。</p>}
         </CardContent>
       </Card>
@@ -305,7 +300,8 @@ export default function RepoDetail() {
           {selectedMonth && <Button variant="ghost" size="sm" onClick={() => setSearchParams({})}>清除月份筛选</Button>}
         </CardHeader>
         {selectedMonth && <div className="px-6 pb-3 text-sm text-muted-foreground">正在查看 {selectedMonth} 的审查</div>}
-        {actionError && <div role="alert" className="mx-6 mb-3 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{actionError}</div>}
+        {actionError && <ErrorNotice error={actionError} compact className="mx-6 mb-3" />}
+        {historyError && <ErrorNotice error={historyError} compact className="mx-6 mb-3" onRetry={() => void load()} />}
         <CardContent className="p-0">
           <Table className="min-w-[760px]">
             <TableHeader>
@@ -333,13 +329,13 @@ export default function RepoDetail() {
                     <TableCell className="px-6 py-3 text-muted-foreground">{new Date(task.created_at).toLocaleString()}</TableCell>
                     <TableCell className="px-6 py-3 text-right">
                       <div className="flex flex-wrap items-center justify-end gap-x-3 gap-y-1">
-                        <Button variant="link" size="sm" className="h-auto p-0" onClick={() => navigate(`/reviews/${task.id}`)}>查看详情</Button>
+                        <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" onClick={() => navigate(`/reviews/${task.id}`)}>查看详情</Button>
                         {task.archived_at ? (
-                          <Button variant="link" size="sm" className="h-auto p-0" disabled={actionPendingId === task.id} onClick={() => void manageTask(task, "restore")}><ArchiveRestore className="mr-1 h-3.5 w-3.5" />恢复</Button>
+                          <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" disabled={actionPendingId === task.id} onClick={() => void manageTask(task, "restore")}><ArchiveRestore className="mr-1 h-3.5 w-3.5" />恢复</Button>
                         ) : (
-                            <Button variant="link" size="sm" className="h-auto p-0" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "archive")}><Archive className="mr-1 h-3.5 w-3.5" />归档</Button>
+                            <Button variant="link" size="sm" className="min-h-11 px-2 sm:min-h-0 sm:h-auto sm:p-0" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "archive")}><Archive className="mr-1 h-3.5 w-3.5" />归档</Button>
                         )}
-                        <Button variant="link" size="sm" className="h-auto p-0 text-destructive" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "delete")}><Trash2 className="mr-1 h-3.5 w-3.5" />删除</Button>
+                        <Button variant="link" size="sm" className="min-h-11 px-2 text-destructive sm:min-h-0 sm:h-auto sm:p-0" disabled={actionPendingId === task.id || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageTask(task, "delete")}><Trash2 className="mr-1 h-3.5 w-3.5" />删除</Button>
                       </div>
                     </TableCell>
                   </TableRow>

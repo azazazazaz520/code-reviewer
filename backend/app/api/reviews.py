@@ -105,7 +105,7 @@ def submit_review(
     db.commit()
     db.refresh(task)
 
-    return task
+    return _to_review_task_response(task)
 
 
 @router.get("/repos/{repo_id}/reviews", response_model=list[ReviewTaskResponse])
@@ -115,7 +115,7 @@ def list_reviews(
     db: Session = Depends(get_db),
 ):
     """获取仓库的审查历史列表，默认隐藏已归档记录。"""
-    return list_reviews_with_archive(repo_id, include_archived, db)
+    return [_to_review_task_response(task) for task in list_reviews_with_archive(repo_id, include_archived, db)]
 
 
 def list_reviews_with_archive(
@@ -141,6 +141,14 @@ def _get_review_task(task_id: str, db: Session) -> ReviewTask:
     return task
 
 
+def _to_review_task_response(task: ReviewTask) -> ReviewTaskResponse:
+    """统一补齐任务上下文，避免状态接口返回空的仓库名称和风险等级。"""
+    response = ReviewTaskResponse.model_validate(task)
+    response.repo_name = task.repo.name if task.repo else None
+    response.risk_level = task.report.risk_level if task.report else None
+    return response
+
+
 def _require_terminal(task: ReviewTask) -> None:
     if task.status in {"pending", "preparing", "running"}:
         raise HTTPException(status_code=409, detail="审查仍在进行中，完成后才能管理该记录")
@@ -155,7 +163,7 @@ def archive_review(task_id: str, db: Session = Depends(get_db)):
         task.archived_at = datetime.now(UTC)
         db.commit()
         db.refresh(task)
-    return task
+    return _to_review_task_response(task)
 
 
 @router.post("/reviews/{task_id}/restore", response_model=ReviewTaskResponse)
@@ -166,7 +174,7 @@ def restore_review(task_id: str, db: Session = Depends(get_db)):
         task.archived_at = None
         db.commit()
         db.refresh(task)
-    return task
+    return _to_review_task_response(task)
 
 
 @router.delete("/reviews/{task_id}", status_code=204)
@@ -185,7 +193,7 @@ def get_review_status(task_id: str, db: Session = Depends(get_db)):
     task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="审查任务不存在")
-    return task
+    return _to_review_task_response(task)
 
 
 @router.get("/reviews/{task_id}/report", response_model=ReviewReportResponse)

@@ -4,7 +4,7 @@
 
 | 层 | 技术 | 说明 |
 |---|---|---|
-| 前端 | React 18 + TypeScript + Vite + Ant Design 5 | Dashboard SPA |
+| 前端 | React 19 + TypeScript + Vite + Tailwind CSS 4 + Base UI + shadcn/ui 风格组件 | 响应式单页应用 |
 | 后端 API | Python 3.11+ FastAPI | REST API + 异步 Task 管理 |
 | 审查引擎 | LangGraph + LangChain | Review Workflow 编排 |
 | 代码图谱 | code-review-graph (pip 库) | 爆炸半径分析 |
@@ -240,6 +240,7 @@ E:\code-reviewer\
 | `/repos` | RepoList | 仓库管理 |
 | `/repos/:id` | RepoDetail | 仓库详情 + 审查提交 |
 | `/reviews/:id` | ReviewDetail | 审查报告 |
+| `/prompts` | PromptWorkbench | 提示词优化工作台 |
 
 ### Dashboard（首页）
 
@@ -348,6 +349,6 @@ Frontend: 轮询到 status=done → GET /api/reviews/{id}/report → 渲染报�
 | 1 | 后端骨架：FastAPI 入口 + 数据库模型 + 仓库 CRUD API |
 | 2 | 审查引擎：LangGraph Workflow + Tool Registry + 基础 Reviewer |
 | 3 | CRG 集成：按 crg-integration-plan.md 实施 |
-| 4 | 前端骨架：React + Vite + Ant Design + 路由 |
-| 5 | 前端页面：Dashboard + RepoList + NewReview + ReviewDetail |
+| 4 | 前端骨架：React + Vite + Tailwind CSS + 路由 |
+| 5 | 前端页面：Dashboard + RepoList + SubmitReviewModal + ReviewDetail + PromptWorkbench |
 | 6 | 联调 + 统计面板 |

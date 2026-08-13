@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Loader2, ChevronDown } from "lucide-react";
 import type { ReviewLog } from "../types";
-import { formatErrorMessage } from "../lib/error-message";
+import { formatErrorMessage } from "../utils/error-message";
 
 const stepLabels: Record<string, string> = {
   prepare_source: "准备审查来源",
@@ -31,14 +31,54 @@ export default function ReviewProgress({
   logs,
   logPolling,
 }: ReviewProgressProps) {
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const logContainerRef = useRef<HTMLDivElement>(null);
+  const previousLogCountRef = useRef(logs.length);
+  const didMountRef = useRef(false);
   const [expanded, setExpanded] = useState(false);
+  const [following, setFollowing] = useState(true);
+  const [newLogsAvailable, setNewLogsAvailable] = useState(false);
 
   useEffect(() => {
-    if (logPolling) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    const previousCount = previousLogCountRef.current;
+    previousLogCountRef.current = logs.length;
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      if (logPolling && following && logContainerRef.current) {
+        logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+      }
+      return;
     }
-  }, [logs.length, logPolling]);
+    if (logs.length <= previousCount) return;
+
+    const container = logContainerRef.current;
+    if (following && container) {
+      container.scrollTop = container.scrollHeight;
+      setNewLogsAvailable(false);
+    } else if (!following) {
+      setNewLogsAvailable(true);
+    }
+  }, [logs.length, logPolling, following]);
+
+  const handleLogScroll = () => {
+    const container = logContainerRef.current;
+    if (!container) return;
+    const atBottom = container.scrollHeight - container.scrollTop - container.clientHeight <= 32;
+    setFollowing(atBottom);
+    if (atBottom) setNewLogsAvailable(false);
+  };
+
+  const scrollToBottom = () => {
+    const container = logContainerRef.current;
+    if (!container) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if (typeof container.scrollTo === "function") {
+      container.scrollTo({ top: container.scrollHeight, behavior: reduceMotion ? "auto" : "smooth" });
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
+    setFollowing(true);
+    setNewLogsAvailable(false);
+  };
 
   const isComplete =
     logs.length > 0 && logs[logs.length - 1].message === "审查完成";
@@ -57,9 +97,17 @@ export default function ReviewProgress({
       : "text-primary";
 
   const stepCount = logs.filter((l) => l.step !== "tool_call").length;
+  const statusText = isComplete
+    ? "审查完成"
+    : isFailed
+      ? "审查失败"
+      : logs.length === 0
+        ? "审查任务已提交，等待执行"
+        : "审查进行中";
 
   return (
     <Card className="mb-6">
+      <div className="sr-only" role="status" aria-live="polite">{statusText}</div>
       <CardHeader className="pb-2">
         <CardTitle className={`text-base ${statusColor}`}>
           {logPolling ? (
@@ -90,7 +138,21 @@ export default function ReviewProgress({
 
       {showLogs && (
         <CardContent>
-          <div className="max-h-[400px] overflow-auto font-mono text-[13px] leading-[1.8]">
+          {!following && newLogsAvailable && (
+            <Button variant="outline" size="sm" className="mb-2 min-h-9" onClick={scrollToBottom}>
+              有新日志，回到底部
+            </Button>
+          )}
+          <div
+            id="review-execution-log"
+            ref={logContainerRef}
+            className="max-h-[400px] overflow-auto font-mono text-[13px] leading-[1.8]"
+            role="log"
+            aria-label="审查执行日志"
+            aria-live="off"
+            tabIndex={0}
+            onScroll={handleLogScroll}
+          >
             {logs.length === 0 && (
               <div className="py-4 font-sans text-sm text-muted-foreground">
                 审查任务已提交，正在等待执行日志...
@@ -136,7 +198,6 @@ export default function ReviewProgress({
               <div className="text-primary mt-1 animate-pulse">...</div>
             )}
 
-            <div ref={bottomRef} />
           </div>
         </CardContent>
       )}

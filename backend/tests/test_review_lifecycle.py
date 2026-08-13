@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from app.api.reviews import (
     archive_review,
     delete_review,
+    get_review_status,
     list_reviews_with_archive,
     restore_review,
 )
@@ -89,6 +90,22 @@ class ReviewLifecycleTests(unittest.TestCase):
         self.assertIsNone(self.session.get(ReviewTask, self.task.id))
         self.assertIsNone(self.session.get(ReviewReport, report.id))
         self.assertIsNone(self.session.get(ReviewLog, log_id))
+
+    def test_status_response_includes_repository_context(self):
+        report = ReviewReport(
+            task_id=self.task.id,
+            summary="summary",
+            risk_level="high",
+            findings_json="[]",
+            stats_json="{}",
+        )
+        self.session.add(report)
+        self.session.commit()
+
+        response = get_review_status(self.task.id, self.session)
+
+        self.assertEqual(response.repo_name, "test-repo")
+        self.assertEqual(response.risk_level, "high")
 
 
 if __name__ == "__main__":

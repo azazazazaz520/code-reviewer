@@ -10,6 +10,7 @@ import {
   WandSparkles,
 } from "lucide-react";
 import { Button } from "./ui/button";
+import { Modal } from "./ui/modal";
 
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "仪表盘" },
@@ -96,9 +97,9 @@ export default function AppLayout() {
     <div className="min-h-screen bg-background md:flex">
       <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur md:hidden">
         <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8 min-h-11 min-w-11"
           onClick={() => setMobileOpen(true)}
           aria-label="打开导航"
         >
@@ -115,21 +116,20 @@ export default function AppLayout() {
         <NavContent compact={collapsed} />
       </aside>
 
-      {mobileOpen && (
-        <div className="fixed inset-0 z-40 md:hidden">
-          <button
-            type="button"
-            className="absolute inset-0 bg-black/50"
-            onClick={() => setMobileOpen(false)}
-            aria-label="关闭导航"
-          />
-          <aside className="relative flex h-full w-72 max-w-[85vw] flex-col border-r bg-card shadow-xl">
+      <Modal
+        open={mobileOpen}
+        onClose={() => setMobileOpen(false)}
+        titleId="mobile-navigation-title"
+        overlayClassName="items-stretch justify-start p-0 md:hidden"
+        panelClassName="relative flex h-full max-h-none w-72 max-w-[85vw] flex-col overflow-hidden rounded-none border-y-0 border-l-0 p-0"
+      >
+            <h2 id="mobile-navigation-title" className="sr-only">主导航</h2>
             <div className="flex items-center gap-2 h-12 px-4 border-b">
               <span className="font-bold text-sm truncate">Code Reviewer</span>
               <Button
                 variant="ghost"
                 size="icon"
-                className="h-8 w-8 ml-auto"
+                className="h-8 w-8 min-h-11 min-w-11 ml-auto"
                 onClick={() => setMobileOpen(false)}
                 aria-label="关闭导航"
               >
@@ -158,11 +158,9 @@ export default function AppLayout() {
                 );
               })}
             </nav>
-          </aside>
-        </div>
-      )}
+      </Modal>
 
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main data-app-background className="flex-1 min-w-0 overflow-auto">
         <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
           <Outlet />
         </div>

@@ -1,23 +1,18 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Loader2, X } from "lucide-react";
 import type { CommitItem, PRItem, Repo } from "../types";
 import { repoApi } from "../api/repos";
 import { reviewApi } from "../api/reviews";
 import { Button } from "./ui/button";
+import ErrorNotice from "./ErrorNotice";
+import { toUserError, type UserErrorInfo } from "../utils/error-message";
+import { Modal } from "./ui/modal";
 
 interface Props {
   open: boolean;
   onClose: () => void;
   preSelectedRepoId?: string;
-}
-
-function getErrorMessage(error: unknown, fallback: string) {
-  const responseError = error as {
-    response?: { data?: { detail?: string } };
-    message?: string;
-  };
-  return responseError.response?.data?.detail || responseError.message || fallback;
 }
 
 function timeAgo(iso: string) {
@@ -47,16 +42,29 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
   const [loadingTargets, setLoadingTargets] = useState(false);
   const [loadingCommits, setLoadingCommits] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [reposError, setReposError] = useState<string | null>(null);
-  const [listError, setListError] = useState<string | null>(null);
-  const [branchError, setBranchError] = useState<string | null>(null);
-  const [submitError, setSubmitError] = useState<string | null>(null);
+  const [reposError, setReposError] = useState<UserErrorInfo | null>(null);
+  const [listError, setListError] = useState<UserErrorInfo | null>(null);
+  const [branchError, setBranchError] = useState<UserErrorInfo | null>(null);
+  const [submitError, setSubmitError] = useState<UserErrorInfo | null>(null);
   const [selectedPR, setSelectedPR] = useState<number | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [manualPR, setManualPR] = useState("");
   const [manualCommit, setManualCommit] = useState("");
   const selectedRepo = repos.find((repo) => repo.id === repoId);
   const isWorkspaceRepo = Boolean(selectedRepo && !selectedRepo.git_url);
+
+  const loadRepos = useCallback(() => {
+    setLoadingRepos(true);
+    setReposError(null);
+    return repoApi.list()
+      .then((res) => {
+        setRepos(res.data);
+        const initialRepo = res.data.find((repo) => repo.id === (preSelectedRepoId ?? ""));
+        if (initialRepo && !initialRepo.git_url) setReviewType("workspace");
+      })
+      .catch((error) => setReposError(toUserError(error, "无法加载仓库列表")))
+      .finally(() => setLoadingRepos(false));
+  }, [preSelectedRepoId]);
 
   useEffect(() => {
     if (!open) return;
@@ -74,16 +82,8 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     setListError(null);
     setBranchError(null);
     setSubmitError(null);
-    setLoadingRepos(true);
-    repoApi.list()
-      .then((res) => {
-        setRepos(res.data);
-        const initialRepo = res.data.find((repo) => repo.id === (preSelectedRepoId ?? ""));
-        if (initialRepo && !initialRepo.git_url) setReviewType("workspace");
-      })
-      .catch((error) => setReposError(getErrorMessage(error, "无法加载仓库列表")))
-      .finally(() => setLoadingRepos(false));
-  }, [open, preSelectedRepoId]);
+    void loadRepos();
+  }, [open, preSelectedRepoId, loadRepos]);
 
   const handleRepoChange = (nextRepoId: string) => {
     const nextRepo = repos.find((repo) => repo.id === nextRepoId);
@@ -113,7 +113,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
       setBranch("");
       reviewApi.listPRs(repoId)
         .then((res) => setPRs(res.data))
-        .catch((error) => setListError(getErrorMessage(error, "无法加载 PR 列表")))
+        .catch((error) => setListError(toUserError(error, "无法加载 PR 列表")))
         .finally(() => setLoadingTargets(false));
       return;
     }
@@ -134,7 +134,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
       setLoadingCommits(true);
       reviewApi.listCommits(repoId)
         .then((res) => setCommits(res.data))
-        .catch((error) => setListError(getErrorMessage(error, "无法加载本地 Commit 列表")))
+        .catch((error) => setListError(toUserError(error, "无法加载本地 Commit 列表")))
         .finally(() => setLoadingCommits(false));
       return;
     }
@@ -143,7 +143,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     setCommits([]);
     repoApi.sync(repoId)
       .then((res) => setBranches(res.data.branches.map((item) => item.name)))
-      .catch((error) => setBranchError(getErrorMessage(error, "无法加载分支列表")))
+      .catch((error) => setBranchError(toUserError(error, "无法加载分支列表")))
       .finally(() => setLoadingTargets(false));
   }, [repoId, reviewType, isWorkspaceRepo]);
 
@@ -160,7 +160,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     setSelectedCommit(null);
     reviewApi.listCommits(repoId, branch)
       .then((res) => setCommits(res.data))
-      .catch((error) => setListError(getErrorMessage(error, "无法加载该分支的 Commit 列表")))
+      .catch((error) => setListError(toUserError(error, "无法加载该分支的 Commit 列表")))
       .finally(() => setLoadingCommits(false));
   }, [repoId, reviewType, branch, isWorkspaceRepo]);
 
@@ -179,20 +179,20 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     const commitHash = selectedCommit || manualCommit.trim() || undefined;
     const isWorkspaceReview = isWorkspaceRepo;
     if (reviewType === "pr" && !prNumber) {
-      setSubmitError("请选择 PR 或输入 PR 编号");
+      setSubmitError(toUserError(null, "请选择 PR 或输入 PR 编号"));
       return;
     }
     if (reviewType === "local" && !isWorkspaceReview && !branch) {
-      setSubmitError("请选择审查分支");
+      setSubmitError(toUserError(null, "请选择审查分支"));
       return;
     }
     if (isWorkspaceReview && !selectedRepo?.local_path) {
-      setSubmitError("请选择本地工作区");
+      setSubmitError(toUserError(null, "请选择本地工作区"));
       return;
     }
 
     if (isWorkspaceReview && reviewType === "local" && !commitHash) {
-      setSubmitError("请选择要审查的本地 Commit");
+      setSubmitError(toUserError(null, "请选择要审查的本地 Commit"));
       return;
     }
 
@@ -211,7 +211,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
       onClose();
       navigate(`/reviews/${response.data.id}`);
     } catch (error) {
-      setSubmitError(getErrorMessage(error, "提交审查失败"));
+      setSubmitError(toUserError(error, "提交审查失败"));
     } finally {
       setSubmitting(false);
     }
@@ -220,16 +220,15 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-      <div
-        className="bg-card border rounded-lg shadow-lg w-full max-w-xl max-h-[90vh] overflow-auto p-6 space-y-4"
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="submit-review-title"
-      >
+    <Modal
+      open={open}
+      onClose={onClose}
+      titleId="submit-review-title"
+      panelClassName="max-w-xl space-y-4"
+    >
         <div className="flex items-center justify-between gap-4">
           <h2 id="submit-review-title" className="text-lg font-semibold">发起审查</h2>
-          <Button variant="ghost" size="icon" aria-label="关闭发起审查弹窗" onClick={onClose}>
+          <Button variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="关闭发起审查弹窗" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
@@ -240,18 +239,18 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
             <option value="">{loadingRepos ? "加载仓库中..." : "选择仓库"}</option>
             {repos.map((repo) => <option key={repo.id} value={repo.id}>{repo.name}</option>)}
           </select>
-          {reposError && <div role="alert" className="mt-2 text-sm text-destructive">{reposError}</div>}
+          {reposError && <ErrorNotice error={reposError} compact className="mt-2" onRetry={() => void loadRepos()} />}
         </div>
 
         <div>
           <span className="text-sm font-medium block mb-1">审查类型</span>
           <div className="flex rounded-md border h-10 w-fit" role="group" aria-label="审查类型">
             {isWorkspaceRepo ? <>
-              <button type="button" className={`px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "workspace" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("workspace")} aria-pressed={reviewType === "workspace"}>未提交改动</button>
-              <button type="button" className={`px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>指定 Commit</button>
+              <button type="button" className={`min-h-11 px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "workspace" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("workspace")} aria-pressed={reviewType === "workspace"}>未提交改动</button>
+              <button type="button" className={`min-h-11 px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>指定 Commit</button>
             </> : <>
-              <button type="button" className={`px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "pr" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("pr")} aria-pressed={reviewType === "pr"}>{getPullRequestLabel(selectedRepo?.git_url)} 审查</button>
-              <button type="button" className={`px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>远程 Commit</button>
+              <button type="button" className={`min-h-11 px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "pr" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("pr")} aria-pressed={reviewType === "pr"}>{getPullRequestLabel(selectedRepo?.git_url)} 审查</button>
+              <button type="button" className={`min-h-11 px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>远程 Commit</button>
             </>}
           </div>
         </div>
@@ -267,7 +266,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
             ) : (
               <input id="submit-review-branch" className="flex h-10 w-full rounded-md border bg-background px-3 py-1 text-sm font-mono" value={branch} onChange={(event) => setBranch(event.target.value)} placeholder={loadingTargets ? "加载分支中..." : "输入分支名称"} disabled={loadingTargets} />
             )}
-            {branchError && <div role="alert" className="mt-2 text-sm text-destructive">{branchError}</div>}
+            {branchError && <ErrorNotice error={branchError} compact className="mt-2" />}
             <p className="mt-1 text-xs text-muted-foreground">选择分支后可继续选择该分支上的具体 Commit；留空则审查分支最新提交。</p>
           </div>
         )}
@@ -288,8 +287,8 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
           )}
 
           {listError && (
-            <div className="space-y-2 mb-2">
-              <div role="alert" className="text-sm text-destructive bg-destructive/5 border border-destructive/30 rounded-md p-3">{listError}</div>
+              <div className="space-y-2 mb-2">
+              <ErrorNotice error={listError} compact />
               {reviewType === "pr" ? (
                 <div>
                   <label htmlFor="manual-pr-number" className="text-sm">手动输入 PR 编号</label>
@@ -327,14 +326,13 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
           )}
         </div>
 
-        {submitError && <div role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{submitError}</div>}
+        {submitError && <ErrorNotice error={submitError} />}
         <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose}>取消</Button>
-          <Button onClick={() => void handleSubmit()} disabled={submitting || !repoId || (reviewType === "local" && !isWorkspaceRepo && !branch) || (isWorkspaceRepo && reviewType === "local" && !selectedCommit && !manualCommit.trim())}>
+          <Button variant="outline" className="min-h-11" onClick={onClose}>取消</Button>
+          <Button className="min-h-11" onClick={() => void handleSubmit()} disabled={submitting || !repoId || (reviewType === "local" && !isWorkspaceRepo && !branch) || (isWorkspaceRepo && reviewType === "local" && !selectedCommit && !manualCommit.trim())}>
             {submitting ? "提交中..." : "开始审查"}
           </Button>
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }
