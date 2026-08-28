@@ -3,25 +3,9 @@ import { Check, Clipboard, Download } from "lucide-react";
 import { Button } from "../ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import { Badge } from "../ui/badge";
-import type { PromptResult } from "../../types/prompt";
+import type { PromptExportBundle, PromptResult } from "../../types/prompt";
 
 type OutputTab = "structured" | "view" | "team" | "terms";
-
-function formatResult(result: PromptResult, format: "markdown" | "jira" | "issue") {
-  const solutions = result.solution.map((item, index) => {
-    const prefix = format === "jira" ? "* " : format === "issue" ? "- [ ] " : `${index + 1}. `;
-    return `${prefix}${item}`;
-  }).join("\n");
-  if (format === "jira") {
-    return `h2. 问题现象\n${result.problem_phenomenon}\n\nh2. 技术本质\n${result.technical_essence}\n\nh2. 解决方案\n${solutions}\n\nh2. 沟通摘要\n${result.team_message}`;
-  }
-  if (format === "issue") {
-    const checks = result.checks.map((item) => `- [ ] ${item}`).join("\n") || "- [ ] 无";
-    return `## 问题描述\n${result.problem_phenomenon}\n\n## 技术背景\n${result.technical_essence}\n\n## 实施清单\n${solutions}\n\n## 验收与待确认\n${checks}\n\n## 沟通摘要\n${result.team_message}`;
-  }
-  const terms = result.term_mappings.map((item) => `- ${item.original} → **${item.professional}**：${item.reason}`).join("\n") || "- 无候选术语映射";
-  return `# ${result.team_message}\n\n## 问题现象\n${result.problem_phenomenon}\n\n## 技术本质\n${result.technical_essence}\n\n## 解决方案\n${solutions}\n\n## 分类\n${result.classification.type}（置信度 ${(result.classification.confidence * 100).toFixed(0)}%）\n${result.classification.reason}\n\n## Bug 视角\n${result.bug_view}\n\n## 需求视角\n${result.prd_view}\n\n## 术语对照\n${terms}`;
-}
 
 function downloadText(filename: string, content: string) {
   const url = URL.createObjectURL(new Blob([content], { type: "text/plain;charset=utf-8" }));
@@ -34,13 +18,14 @@ function downloadText(filename: string, content: string) {
 
 interface PromptOutputPanelProps {
   result: PromptResult | null;
+  exports: PromptExportBundle | null;
 }
 
-export default function PromptOutputPanel({ result }: PromptOutputPanelProps) {
+export default function PromptOutputPanel({ result, exports }: PromptOutputPanelProps) {
   const [tab, setTab] = useState<OutputTab>("structured");
   const [feedback, setFeedback] = useState<string | null>(null);
 
-  if (!result) {
+  if (!result || !exports) {
     return (
       <Card className="min-h-[28rem]">
         <CardContent className="flex h-full min-h-[28rem] items-center justify-center text-center text-sm text-muted-foreground">
@@ -52,8 +37,12 @@ export default function PromptOutputPanel({ result }: PromptOutputPanelProps) {
 
   const copy = async (format: "markdown" | "jira" | "issue") => {
     const labels = { markdown: "Markdown", jira: "Jira 文本", issue: "Issue 模板" };
-    await navigator.clipboard.writeText(formatResult(result, format));
-    setFeedback(`已复制 ${labels[format]}`);
+    try {
+      await navigator.clipboard.writeText(exports[format]);
+      setFeedback(`已复制 ${labels[format]}`);
+    } catch {
+      setFeedback("复制失败，请检查浏览器权限");
+    }
     window.setTimeout(() => setFeedback(null), 1800);
   };
 
@@ -90,7 +79,7 @@ export default function PromptOutputPanel({ result }: PromptOutputPanelProps) {
           <Button size="sm" variant="outline" onClick={() => void copy("markdown")}><Clipboard className="h-4 w-4" />复制 Markdown</Button>
           <Button size="sm" variant="outline" onClick={() => void copy("jira")}><Clipboard className="h-4 w-4" />复制 Jira 文本</Button>
           <Button size="sm" variant="outline" onClick={() => void copy("issue")}><Clipboard className="h-4 w-4" />复制 Issue 模板</Button>
-          <Button size="sm" variant="ghost" onClick={() => downloadText("prompt-result.md", formatResult(result, "markdown"))}><Download className="h-4 w-4" />下载</Button>
+          <Button size="sm" variant="ghost" onClick={() => downloadText("prompt-result.md", exports.markdown)}><Download className="h-4 w-4" />下载</Button>
           {feedback && <span className="flex items-center gap-1 text-xs text-muted-foreground"><Check className="h-3.5 w-3.5" />{feedback}</span>}
         </div>
       </CardContent>

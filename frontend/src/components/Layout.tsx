@@ -16,7 +16,7 @@ import { Modal } from "./ui/modal";
 const navItems = [
   { path: "/", icon: LayoutDashboard, label: "仪表盘" },
   { path: "/repos", icon: GitBranch, label: "仓库管理" },
-  { path: "/prompts", icon: WandSparkles, label: "提示词优化" },
+  { path: "/prompts", icon: WandSparkles, label: "Prompt 工具箱" },
   { path: "/settings", icon: SettingsIcon, label: "设置" },
 ];
 

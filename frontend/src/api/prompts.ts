@@ -5,7 +5,7 @@ import type {
   PromptSessionResponse,
 } from "../types/prompt";
 
-// 提示词生成包含同步模型调用，客户端超时必须覆盖后端允许的 60 秒模型超时。
+// 提示词生成的 60 秒是一次请求总预算，客户端额外保留网络传输缓冲。
 export const PROMPT_REQUEST_TIMEOUT_MS = 70_000;
 
 export const promptApi = {
@@ -15,10 +15,10 @@ export const promptApi = {
     });
   },
 
-  addTurn(sessionId: string, feedback: string) {
+  addTurn(sessionId: string, feedback: string, expectedTurn: number, idempotencyKey: string) {
     return api.post<PromptOptimizeResponse>(
       `/prompts/sessions/${encodeURIComponent(sessionId)}/turns`,
-      { feedback },
+      { feedback, expected_turn: expectedTurn, idempotency_key: idempotencyKey },
       { timeout: PROMPT_REQUEST_TIMEOUT_MS },
     );
   },

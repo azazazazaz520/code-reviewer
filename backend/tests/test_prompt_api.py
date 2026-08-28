@@ -32,6 +32,11 @@ class FakePromptLLM:
         }
 
 
+class TimeoutPromptLLM(FakePromptLLM):
+    def chat(self, _messages, **_kwargs):
+        raise TimeoutError("provider timeout")
+
+
 class PromptApiTests(unittest.TestCase):
     def test_optimize_and_review_session_endpoints(self):
         original = prompts_api.optimizer
@@ -50,6 +55,7 @@ class PromptApiTests(unittest.TestCase):
                 self.assertEqual(body["turn"], 1)
                 self.assertIsNotNone(body["session_id"])
                 self.assertIn("team_message", body["result"])
+                self.assertIn("markdown", body["exports"])
 
                 status = client.get(f"/api/prompts/sessions/{body['session_id']}")
                 self.assertEqual(status.status_code, 200)
@@ -57,7 +63,11 @@ class PromptApiTests(unittest.TestCase):
 
                 turn = client.post(
                     f"/api/prompts/sessions/{body['session_id']}/turns",
-                    json={"feedback": "确认需要保留本地导出"},
+                    json={
+                        "feedback": "确认需要保留本地导出",
+                        "expected_turn": 1,
+                        "idempotency_key": "api-turn-1",
+                    },
                 )
                 self.assertEqual(turn.status_code, 200)
                 self.assertEqual(turn.json()["turn"], 2)
@@ -72,6 +82,20 @@ class PromptApiTests(unittest.TestCase):
             unknown = client.get("/api/prompts/sessions/not-found")
             self.assertEqual(unknown.status_code, 404)
             self.assertEqual(unknown.json()["detail"]["code"], "prompt_session_not_found")
+
+    def test_timeout_is_exposed_as_gateway_timeout(self):
+        original = prompts_api.optimizer
+        prompts_api.optimizer = PromptOptimizer(llm=TimeoutPromptLLM())
+        try:
+            with TestClient(app) as client:
+                response = client.post(
+                    "/api/prompts/optimize",
+                    json={"content": "验证模型超时错误分类"},
+                )
+                self.assertEqual(response.status_code, 504)
+                self.assertEqual(response.json()["detail"]["code"], "prompt_llm_timeout")
+        finally:
+            prompts_api.optimizer = original
 
 
 if __name__ == "__main__":

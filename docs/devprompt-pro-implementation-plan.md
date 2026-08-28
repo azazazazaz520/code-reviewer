@@ -35,7 +35,7 @@
 
 ```mermaid
 flowchart LR
-    A[打开提示词优化工作区] --> B[输入口语描述或日志]
+    A[打开 Prompt 工具箱] --> B[输入口语描述或日志]
     B --> C[选择目标接收人与生成模式]
     C --> D[术语映射与意图分类]
     D --> E[结构化生成]
@@ -224,7 +224,7 @@ LLMClient.chat(messages, response_format=...)
 - `frontend/src/api/prompts.ts`：API 客户端；
 - `frontend/src/types/prompt.ts`：请求、响应和词库类型。
 
-在 `App.tsx` 增加 `/prompts` 路由，在 `Layout.tsx` 增加“提示词优化”入口。初始页面采用左右布局：左侧输入与配置，右侧结果预览；窄屏改为上下布局。
+在 `App.tsx` 增加 `/prompts` 路由，在 `Layout.tsx` 增加“Prompt 工具箱”入口。初始页面采用左右布局：左侧输入与配置，右侧结果预览；窄屏改为上下布局。
 
 ### 6.2 输出与导出
 

@@ -63,6 +63,7 @@ class PromptOptimizeRequest(BaseModel):
     persona: PromptPersona = PromptPersona.GENERAL
     mode: PromptMode = PromptMode.INSTANT
     glossary_enabled: bool = True
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("content")
     @classmethod
@@ -74,6 +75,8 @@ class PromptOptimizeRequest(BaseModel):
 
 class PromptTurnRequest(BaseModel):
     feedback: str = Field(min_length=1, max_length=4000)
+    expected_turn: int | None = Field(default=None, ge=1)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=128)
 
     @field_validator("feedback")
     @classmethod
@@ -83,12 +86,35 @@ class PromptTurnRequest(BaseModel):
         return value
 
 
+class PromptGenerationMetadata(BaseModel):
+    model: str = "unknown"
+    prompt_id: str = "devprompt-pro"
+    prompt_version: str = "1.0.0"
+    schema_version: str = "1"
+    elapsed_ms: int = Field(default=0, ge=0)
+    llm_attempts: int = Field(default=0, ge=0)
+    format_repaired: bool = False
+    candidate_mapping_count: int = Field(default=0, ge=0)
+    turn: int = Field(default=1, ge=1)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+
+
+class PromptExportBundle(BaseModel):
+    markdown: str = ""
+    jira: str = ""
+    issue: str = ""
+
+
 class PromptOptimizeResponse(BaseModel):
     result: PromptResult
     turn: int
+    max_turns: int = Field(default=3, ge=1)
     session_id: str | None = None
     expires_at: str | None = None
-    metadata: dict[str, int | str] = Field(default_factory=dict)
+    metadata: PromptGenerationMetadata = Field(default_factory=PromptGenerationMetadata)
+    exports: PromptExportBundle = Field(default_factory=PromptExportBundle)
 
 
 class PromptSessionResponse(BaseModel):
