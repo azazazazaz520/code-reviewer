@@ -110,6 +110,20 @@ describe("Settings", () => {
     expect(screen.getByText("浏览器模式不具备打开本地路径的桌面能力。")).toBeInTheDocument();
   });
 
+  it("保存设置后保持当前分区", async () => {
+    render(
+      <ThemeProvider>
+        <Settings />
+      </ThemeProvider>,
+    );
+
+    fireEvent.change(screen.getByRole("combobox", { name: "设置分区" }), { target: { value: "review" } });
+    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+
+    expect(await screen.findByText("审查设置已保存")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "审查行为" })).toBeInTheDocument();
+  });
+
   it("不向用户界面暴露研发阶段和实现限制文案", () => {
     render(
       <ThemeProvider>

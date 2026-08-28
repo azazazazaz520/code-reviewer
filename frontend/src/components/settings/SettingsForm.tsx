@@ -18,7 +18,13 @@ interface SettingsFormProps {
 
 export function SettingsForm({ onSubmit, saving, message, error, children }: SettingsFormProps) {
   return (
-    <form onSubmit={(event) => void onSubmit(event)} className="space-y-1">
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void onSubmit(event);
+      }}
+      className="space-y-1"
+    >
       {children}
       <div className="flex flex-wrap items-center justify-end gap-3 border-t border-border/70 pt-4">
         {message && (

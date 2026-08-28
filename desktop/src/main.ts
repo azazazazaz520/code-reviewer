@@ -5,6 +5,7 @@ import {
   BrowserWindow,
   dialog,
   ipcMain,
+  Menu,
 } from "electron";
 
 import { createAppConfig, createSidecarConfig, getAppRoot } from "./app-config";
@@ -43,6 +44,8 @@ if (!hasSingleInstance) {
 }
 
 async function startApplication(): Promise<void> {
+  Menu.setApplicationMenu(null);
+
   const mode = app.isPackaged ? "production" : "development";
   const appConfig = createAppConfig({
     mode,
