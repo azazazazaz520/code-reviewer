@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
 import type { DesktopRuntimeInfo, SidecarState } from "./types";
+import type { SecretProvider } from "./secret-store";
 
 // Keep the sandboxed preload self-contained: it may require Electron's built-ins,
 // but it must not depend on another local CommonJS module.
@@ -12,6 +13,10 @@ const desktopRuntime = {
     ipcRenderer.invoke("desktop:choose-directory"),
   openPath: (requestedPath: string): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke("desktop:open-path", requestedPath),
+  saveSecret: (provider: SecretProvider, value: string): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("desktop:save-secret", provider, value),
+  clearSecret: (provider: SecretProvider): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke("desktop:clear-secret", provider),
   onBackendState: (listener: (state: SidecarState) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, state: SidecarState) =>
       listener(state);

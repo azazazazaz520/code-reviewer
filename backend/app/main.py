@@ -18,10 +18,14 @@ from app.api.stats import router as stats_router
 from app.api.prompts import router as prompts_router
 from app.api.settings import router as settings_router
 from app.services.review_runner import ReviewTaskRunner
+from app.services.settings_service import initialize_settings, refresh_runtime_consumers
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # 在创建 worker 和接受业务请求前应用本机用户配置，确保新任务读取同一份快照。
+    initialize_settings()
+    refresh_runtime_consumers()
     # 确保数据目录存在
     db_path = settings.database_url.replace("sqlite:///", "")
     Path(db_path).parent.mkdir(parents=True, exist_ok=True)

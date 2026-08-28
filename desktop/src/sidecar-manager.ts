@@ -45,6 +45,7 @@ export class SidecarManager {
   private baseUrl: string | null = null;
   private stopping = false;
   private readonly listeners = new Set<(state: SidecarState) => void>();
+  private allocatedPort: number | null = null;
 
   constructor(config: SidecarConfig) {
     this.config = {
@@ -68,7 +69,8 @@ export class SidecarManager {
     this.stopping = false;
     this.setState({ status: "starting" });
 
-    const port = this.config.port ?? (await this.config.allocatePort!());
+    const port = this.config.port ?? this.allocatedPort ?? (await this.config.allocatePort!());
+    this.allocatedPort = port;
     const baseUrl = `http://127.0.0.1:${port}`;
 
     try {
@@ -77,6 +79,7 @@ export class SidecarManager {
         cwd: this.config.rootDir,
         env: {
           ...process.env,
+          ...(this.config.getSecretEnvironment?.() ?? {}),
           CODE_REVIEWER_DESKTOP: "1",
         },
         windowsHide: true,
@@ -118,6 +121,11 @@ export class SidecarManager {
       child.kill("SIGKILL");
     }
     this.setState({ status: "stopped" });
+  }
+
+  async restart(): Promise<{ baseUrl: string }> {
+    await this.stop();
+    return this.start();
   }
 
   getState(): SidecarState {

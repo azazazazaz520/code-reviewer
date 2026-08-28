@@ -60,6 +60,7 @@ vi.mock("../hooks/use-settings", () => ({
     loading: false,
     error: null,
     reload: vi.fn(),
+    save: vi.fn(),
   }),
 }));
 
@@ -88,8 +89,8 @@ describe("Settings", () => {
     expect(screen.getByText("跟随系统")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /模型服务/ }));
-    expect(screen.getByText("deepseek-chat")).toBeInTheDocument();
-    expect(screen.getByText("来源：环境配置")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("deepseek-chat")).toBeInTheDocument();
+    expect(screen.getByText("当前来源：环境配置")).toBeInTheDocument();
     expect(screen.getByText("模型服务 API Key")).toBeInTheDocument();
     expect(screen.getByText("未配置")).toBeInTheDocument();
   });
@@ -107,5 +108,18 @@ describe("Settings", () => {
 
     fireEvent.change(screen.getByRole("combobox", { name: "设置分区" }), { target: { value: "storage" } });
     expect(screen.getByText("浏览器模式不具备打开本地路径的桌面能力。")).toBeInTheDocument();
+  });
+
+  it("不向用户界面暴露研发阶段和实现限制文案", () => {
+    render(
+      <ThemeProvider>
+        <Settings />
+      </ThemeProvider>,
+    );
+
+    for (const section of ["model", "git", "review", "prompt", "storage", "about"] as const) {
+      fireEvent.change(screen.getByRole("combobox", { name: "设置分区" }), { target: { value: section } });
+      expect(screen.queryByText(/P0|P1|只读模式|不提供|后续阶段|当前后端进程/)).not.toBeInTheDocument();
+    }
   });
 });

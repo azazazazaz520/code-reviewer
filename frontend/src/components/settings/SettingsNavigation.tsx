@@ -19,7 +19,7 @@ export const settingsSections: Array<{
   { id: "model", label: "模型服务", description: "当前模型与凭据状态", icon: Sparkles },
   { id: "git", label: "代码托管", description: "GitHub 与 Gitee 状态", icon: GitBranch },
   { id: "review", label: "审查行为", description: "上下文与审查策略", icon: SlidersHorizontal },
-  { id: "prompt", label: "提示词工作台", description: "请求与会话限制", icon: Settings2 },
+  { id: "prompt", label: "Prompt 工具箱", description: "请求与会话限制", icon: Settings2 },
   { id: "storage", label: "数据与诊断", description: "路径与运行状态", icon: Database },
   { id: "about", label: "关于", description: "版本与运行信息", icon: Info },
 ];

@@ -15,8 +15,12 @@ export interface DesktopRuntimeBridge {
   getInfo: () => Promise<DesktopRuntimeInfo>;
   chooseDirectory: () => Promise<string | null>;
   openPath: (requestedPath: string) => Promise<{ ok: boolean; error?: string }>;
+  saveSecret: (provider: SecretProvider, value: string) => Promise<{ ok: boolean; error?: string }>;
+  clearSecret: (provider: SecretProvider) => Promise<{ ok: boolean; error?: string }>;
   onBackendState: (listener: (state: SidecarState) => void) => () => void;
 }
+
+export type SecretProvider = "llm" | "github" | "gitee";
 
 declare global {
   interface Window {

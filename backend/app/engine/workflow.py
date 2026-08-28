@@ -15,6 +15,7 @@ from typing import Callable
 
 from langgraph.graph import StateGraph, END
 
+from app.config import settings
 from app.engine.state import ReviewState
 from app.engine.nodes import (
     load_pr_node,
@@ -129,7 +130,7 @@ def run_workflow(
             "summary": "",
             "risk_level": "low",
             "review_status": "complete",
-            "crg_enabled": True,
+            "crg_enabled": settings.crg_enabled,
             "impact_radius": None,
             "_log_hook": log_hook,
         }

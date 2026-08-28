@@ -36,7 +36,7 @@ def collect_context_node(state: ReviewState) -> ReviewState:
     # 只在第一轮建立候选文件集合；后续 Reflection 只读取下一批。
     if not state.get("context_initialized"):
         state["context_initialized"] = True
-        if try_crg_context(state, repo_path, changed_files):
+        if settings.crg_enabled and try_crg_context(state, repo_path, changed_files):
             state["crg_enabled"] = True
         else:
             state["crg_enabled"] = False

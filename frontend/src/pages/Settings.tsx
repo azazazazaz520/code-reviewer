@@ -19,7 +19,7 @@ const sectionTitles: Record<SettingsSection, string> = {
   model: "模型服务",
   git: "代码托管",
   review: "审查行为",
-  prompt: "提示词工作台",
+  prompt: "Prompt 工具箱",
   storage: "数据与诊断",
   about: "关于",
 };
@@ -35,7 +35,7 @@ function LoadingState() {
 
 export default function Settings() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
-  const { snapshot, runtime, sidecarState, runtimeError, loading, error, reload } = useSettings();
+  const { snapshot, runtime, sidecarState, runtimeError, loading, error, reload, save } = useSettings();
 
   useEffect(() => {
     document.title = `${sectionTitles[activeSection]} · 设置 · Code Reviewer`;
@@ -45,11 +45,11 @@ export default function Settings() {
     if (!snapshot) return null;
     switch (activeSection) {
       case "appearance": return <AppearanceSettings />;
-      case "model": return <ModelSettings snapshot={snapshot} />;
-      case "git": return <GitHostSettings snapshot={snapshot} />;
-      case "review": return <ReviewSettings snapshot={snapshot} />;
-      case "prompt": return <PromptSettings snapshot={snapshot} />;
-      case "storage": return <StorageSettings snapshot={snapshot} runtime={runtime} sidecarState={sidecarState} />;
+      case "model": return <ModelSettings snapshot={snapshot} onSaved={save} onSecretChanged={reload} />;
+      case "git": return <GitHostSettings snapshot={snapshot} onChanged={reload} />;
+      case "review": return <ReviewSettings snapshot={snapshot} onSaved={save} />;
+      case "prompt": return <PromptSettings snapshot={snapshot} onSaved={save} />;
+      case "storage": return <StorageSettings snapshot={snapshot} runtime={runtime} sidecarState={sidecarState} onSaved={save} />;
       case "about": return <AboutSettings snapshot={snapshot} runtime={runtime} />;
     }
   };
@@ -90,7 +90,7 @@ export default function Settings() {
             <SettingsNavigation activeSection={activeSection} onChange={setActiveSection} />
             <Card className="mt-4 hidden border-border/80 bg-muted/30 shadow-none md:block">
               <CardContent className="p-4 text-xs leading-5 text-muted-foreground">
-                设置页当前为只读模式。主题偏好会立即保存在本地，其他配置仍由后端启动环境管理。
+                修改设置后请点击对应分区的“保存设置”，新请求会按保存后的配置运行。
               </CardContent>
             </Card>
           </aside>

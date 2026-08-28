@@ -46,6 +46,7 @@ export interface SidecarConfig {
   fetchReady?: FetchReady;
   allocatePort?: AllocatePort;
   onLog?: (line: string) => void;
+  getSecretEnvironment?: () => Record<string, string>;
 }
 
 export interface DesktopRuntimeInfo {

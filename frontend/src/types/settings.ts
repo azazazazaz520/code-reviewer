@@ -50,6 +50,53 @@ export interface EffectiveSettingsSnapshot {
   secret_status: SecretStatus;
 }
 
+export interface LLMSettingsPatch {
+  model?: string;
+  base_url?: string;
+  temperature?: number;
+  max_tokens?: number;
+}
+
+export interface ReviewSettingsPatch {
+  max_reflection_rounds?: number;
+  context_files_per_round?: number;
+  crg_enabled?: boolean;
+}
+
+export interface PromptSettingsPatch {
+  timeout_seconds?: number;
+  min_input_chars?: number;
+  max_input_chars?: number;
+  max_output_tokens?: number;
+  session_ttl_seconds?: number;
+  session_max_count?: number;
+  session_max_context_chars?: number;
+}
+
+export interface StorageSettingsPatch {
+  repos_dir?: string;
+}
+
+export interface SettingsPatch {
+  llm?: LLMSettingsPatch;
+  review?: ReviewSettingsPatch;
+  prompt?: PromptSettingsPatch;
+  storage?: StorageSettingsPatch;
+}
+
+export interface SettingsChange {
+  path: string;
+  effective_for: string;
+  requires_restart: boolean;
+}
+
+export interface SettingsUpdateResponse {
+  status: "saved";
+  config_version: number;
+  changed: SettingsChange[];
+  snapshot: EffectiveSettingsSnapshot;
+}
+
 export type SettingsSection =
   | "appearance"
   | "model"

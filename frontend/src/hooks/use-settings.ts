@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getDesktopBridge, getDesktopRuntime } from "../runtime/desktop";
 import { settingsApi } from "../api/settings";
-import type { EffectiveSettingsSnapshot } from "../types/settings";
+import type { EffectiveSettingsSnapshot, SettingsPatch, SettingsUpdateResponse } from "../types/settings";
 import { toUserError, type UserErrorInfo } from "../utils/error-message";
 import type { DesktopRuntimeInfo, SidecarState } from "../runtime/desktop";
 
@@ -13,6 +13,7 @@ interface UseSettingsResult {
   loading: boolean;
   error: UserErrorInfo | null;
   reload: () => void;
+  save: (settings: SettingsPatch) => Promise<SettingsUpdateResponse>;
 }
 
 export function useSettings(): UseSettingsResult {
@@ -25,6 +26,12 @@ export function useSettings(): UseSettingsResult {
   const [reloadKey, setReloadKey] = useState(0);
 
   const reload = useCallback(() => setReloadKey((value) => value + 1), []);
+  const save = useCallback(async (patch: SettingsPatch) => {
+    if (!snapshot) throw new Error("设置尚未加载");
+    const response = await settingsApi.update(snapshot.config_version, patch);
+    setSnapshot(response.data.snapshot);
+    return response.data;
+  }, [snapshot]);
 
   useEffect(() => {
     let active = true;
@@ -62,5 +69,5 @@ export function useSettings(): UseSettingsResult {
     };
   }, [reloadKey]);
 
-  return { snapshot, runtime, sidecarState, runtimeError, loading, error, reload };
+  return { snapshot, runtime, sidecarState, runtimeError, loading, error, reload, save };
 }

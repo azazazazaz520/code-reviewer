@@ -9,6 +9,7 @@ export interface AppConfig {
   mode: "development" | "production";
   rootDir: string;
   dataDir: string;
+  secretsFile: string;
   frontendDist: string;
   backendExecutable: string;
   pythonExecutable: string;
@@ -41,6 +42,7 @@ export function createAppConfig(options: {
     mode: options.mode,
     rootDir: options.rootDir,
     dataDir,
+    secretsFile: path.join(dataDir, "secrets.json"),
     frontendDist,
     backendExecutable,
     pythonExecutable: fs.existsSync(pythonExecutable)

@@ -10,6 +10,7 @@ import {
 import { createAppConfig, createSidecarConfig, getAppRoot } from "./app-config";
 import { BACKEND_STATE_CHANNEL } from "./channels";
 import { registerDesktopBridge } from "./desktop-bridge";
+import { SecretStore } from "./secret-store";
 import { SidecarManager } from "./sidecar-manager";
 
 let mainWindow: BrowserWindow | null = null;
@@ -51,14 +52,18 @@ async function startApplication(): Promise<void> {
     devServerUrl: process.env.CODE_REVIEWER_DEV_SERVER_URL,
   });
 
+  const secretStore = new SecretStore(appConfig.secretsFile);
+
   sidecar = new SidecarManager({
     ...createSidecarConfig(appConfig),
+    getSecretEnvironment: () => secretStore.environment(),
     onLog: (line) => console.log(`[sidecar] ${line}`),
   });
   registerDesktopBridge({
     appConfig,
     appVersion: app.getVersion(),
     sidecar,
+    secretStore,
   });
 
   const runtime = await sidecar.start();

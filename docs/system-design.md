@@ -240,8 +240,8 @@ E:\code-reviewer\
 | `/repos` | RepoList | 仓库管理 |
 | `/repos/:id` | RepoDetail | 仓库详情 + 审查提交 |
 | `/reviews/:id` | ReviewDetail | 审查报告 |
-| `/prompts` | PromptWorkbench | 提示词优化工作台 |
-| `/settings` | Settings | 统一设置与本机运行状态（P0 只读） |
+| `/prompts` | PromptWorkbench | Prompt 工具箱 |
+| `/settings` | Settings | 统一设置与本机运行状态 |
 
 ### Dashboard（首页）
 
@@ -345,9 +345,9 @@ Frontend: 轮询到 status=done → GET /api/reviews/{id}/report → 渲染报�
 
 ### Settings（设置）
 
-设置页通过 `GET /api/settings` 读取当前后端进程已经生效的脱敏配置快照，展示模型服务、代码托管凭据状态、审查行为、提示词工作台限制、数据目录和运行模式。主题属于前端本地偏好，使用浏览器本地存储并立即生效。
+设置页通过 `GET /api/settings` 读取脱敏的有效配置快照，并通过 `PATCH /api/settings` 保存模型参数、审查参数、Prompt 工具箱限制和仓库根目录。保存采用版本化 `settings.json`、原子替换和 `expected_version` 冲突检查；保存后新建请求和新任务读取最新配置，正在执行的任务继续使用开始执行时的配置。
 
-P0 只读快照不返回 API Key、GitHub Token 或 Gitee Token 的内容，也不写入非敏感配置。Electron 模式通过 preload 白名单读取数据目录和 sidecar 状态；浏览器模式明确展示本地路径能力限制。配置持久化、连接测试、凭据管理和 sidecar 重启按设置实施方案分阶段实现。
+模型服务支持非敏感参数编辑和连接测试。API Key、GitHub Token、Gitee Token 只在 Electron 模式通过 preload 白名单调用 `safeStorage`，sidecar 重启时以受控环境注入；普通设置响应只返回凭据状态。浏览器模式不伪造密钥管理按钮。设置页面遵守 `docs/ui-copy-policy.md`，不展示研发阶段或内部实现备注。
 
 ## 下一步实施顺序
 

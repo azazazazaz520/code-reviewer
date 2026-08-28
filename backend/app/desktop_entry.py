@@ -25,6 +25,7 @@ def _configure_environment(data_dir: Path | None, frontend_dist: Path | None) ->
             f"sqlite:///{(data_dir / 'code_reviewer.db').as_posix()}"
         )
         os.environ["REPOS_DIR"] = str(data_dir / "repos")
+        os.environ["CODE_REVIEWER_DATA_DIR"] = str(data_dir)
 
     if frontend_dist is not None:
         os.environ["FRONTEND_DIST_DIR"] = str(frontend_dist.expanduser().resolve())

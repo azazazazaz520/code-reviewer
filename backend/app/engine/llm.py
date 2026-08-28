@@ -15,14 +15,22 @@ from typing import Callable
 class LLMProvider:
     """统一的 LLM 调用接口。"""
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ):
         self.client = OpenAI(
-            api_key=settings.deepseek_api_key,
-            base_url=settings.deepseek_base_url,
+            api_key=settings.deepseek_api_key if api_key is None else api_key,
+            base_url=settings.deepseek_base_url if base_url is None else base_url,
         )
-        self.model = settings.llm_model
-        self.temperature = settings.llm_temperature
-        self.max_tokens = settings.llm_max_tokens
+        self.model = settings.llm_model if model is None else model
+        self.temperature = settings.llm_temperature if temperature is None else temperature
+        self.max_tokens = settings.llm_max_tokens if max_tokens is None else max_tokens
 
     def chat(
         self,
@@ -271,3 +279,10 @@ def get_llm() -> LLMProvider:
     if _llm is None:
         _llm = LLMProvider()
     return _llm
+
+
+def reset_llm() -> None:
+    """丢弃旧配置创建的客户端，使后续任务读取最新模型设置。"""
+
+    global _llm
+    _llm = None
