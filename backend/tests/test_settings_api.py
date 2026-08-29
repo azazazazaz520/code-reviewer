@@ -1,7 +1,7 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -45,6 +45,30 @@ class SettingsApiTests(unittest.TestCase):
             self.assertNotIn(value, serialized)
         self.assertNotIn("database_url", serialized)
         self.assertNotIn("reviewer_timeout_seconds", serialized)
+
+    def test_llm_connection_uses_fixed_short_response_budget(self):
+        original_api_key = settings.deepseek_api_key
+        settings.deepseek_api_key = "test-deepseek-secret"
+        provider = MagicMock()
+        configured_values = (1, 7, 8, 4096)
+        try:
+            with patch("app.api.settings.LLMProvider", return_value=provider):
+                with TestClient(app) as client:
+                    responses = [
+                        client.post(
+                            "/api/settings/test/llm",
+                            json={"max_tokens": value},
+                        )
+                        for value in configured_values
+                    ]
+        finally:
+            settings.deepseek_api_key = original_api_key
+
+        self.assertEqual([response.status_code for response in responses], [200] * len(configured_values))
+        self.assertEqual(
+            [call.kwargs["max_tokens"] for call in provider.chat.call_args_list],
+            [8] * len(configured_values),
+        )
 
     def test_settings_endpoint_saves_user_configuration(self):
         original_model = settings.llm_model

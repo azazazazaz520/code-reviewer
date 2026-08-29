@@ -27,6 +27,9 @@ from app.services.settings_store import SettingsStoreError
 
 router = APIRouter(prefix="/api/settings", tags=["settings"])
 
+# 连接测试只验证服务可用性，固定短响应上限，避免受页面草稿的生成上限影响。
+_CONNECTION_TEST_MAX_TOKENS = 8
+
 
 def _raise_settings_error(error: Exception) -> None:
     if isinstance(error, (SettingsInputError, ValueError)):
@@ -88,12 +91,11 @@ def test_llm_connection(request: LLMConnectionTestRequest) -> ConnectionTestResp
             base_url=llm["base_url"],
             model=llm["model"],
             temperature=llm["temperature"],
-            max_tokens=min(int(llm["max_tokens"]), 32),
         )
         client.chat(
             [{"role": "user", "content": "请只回复 OK。"}],
             timeout_seconds=10,
-            max_tokens=8,
+            max_tokens=_CONNECTION_TEST_MAX_TOKENS,
         )
         return ConnectionTestResponse(ok=True, message="模型服务连接正常")
     except HTTPException:
