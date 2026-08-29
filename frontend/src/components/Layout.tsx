@@ -122,6 +122,7 @@ export default function AppLayout() {
         open={mobileOpen}
         onClose={() => setMobileOpen(false)}
         titleId="mobile-navigation-title"
+        motion="drawer"
         overlayClassName="items-stretch justify-start p-0 md:hidden"
         panelClassName="relative flex h-full max-h-none w-72 max-w-[85vw] flex-col overflow-hidden rounded-none border-y-0 border-l-0 p-0"
       >

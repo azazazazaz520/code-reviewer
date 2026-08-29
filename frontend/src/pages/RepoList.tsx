@@ -201,7 +201,7 @@ export default function RepoList() {
         </CardContent>
       </Card>
 
-      {showForm && <Modal open={showForm} onClose={() => setShowForm(false)} titleId="repo-form-title" panelClassName="max-w-md space-y-4">
+      <Modal open={showForm} onClose={() => setShowForm(false)} titleId="repo-form-title" panelClassName="max-w-md space-y-4">
             <div className="flex items-center justify-between gap-4">
               <h2 id="repo-form-title" className="text-lg font-semibold">{editing ? "编辑仓库" : "添加仓库"}</h2>
               <Button variant="ghost" size="icon" className="min-h-11 min-w-11" aria-label="关闭仓库表单" onClick={() => setShowForm(false)}>
@@ -241,7 +241,7 @@ export default function RepoList() {
                 {saving ? "保存中..." : "保存"}
               </Button>
             </div>
-      </Modal>}
+      </Modal>
 
       <SubmitReviewModal open={reviewModalOpen} onClose={() => setReviewModalOpen(false)} />
     </div>

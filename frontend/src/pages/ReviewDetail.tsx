@@ -334,7 +334,7 @@ export default function ReviewDetail() {
   );
 
   return page(
-    <div className="space-y-4">
+    <div className="review-report-enter space-y-4">
       {/* Navigation */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <Button variant="ghost" onClick={() => navigate(-1)}>

@@ -1,6 +1,8 @@
-import { useEffect, useRef, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { cn } from "@/lib/utils";
+
+const MODAL_ANIMATION_DURATION = 250;
 
 interface ModalProps {
   open: boolean;
@@ -9,6 +11,7 @@ interface ModalProps {
   children: ReactNode;
   panelClassName?: string;
   overlayClassName?: string;
+  motion?: "modal" | "drawer";
 }
 
 const focusableSelector = [
@@ -21,14 +24,62 @@ const focusableSelector = [
   "[tabindex]:not([tabindex=\"-1\"])",
 ].join(",");
 
-export function Modal({ open, onClose, titleId, children, panelClassName, overlayClassName }: ModalProps) {
+export function Modal({
+  open,
+  onClose,
+  titleId,
+  children,
+  panelClassName,
+  overlayClassName,
+  motion = "modal",
+}: ModalProps) {
+  const [mounted, setMounted] = useState(open);
+  const [visible, setVisible] = useState(open);
+  const mountedRef = useRef(open);
   const panelRef = useRef<HTMLDivElement>(null);
   const previousFocusRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const closeTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    if (open) {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+
+      if (!mountedRef.current) {
+        mountedRef.current = true;
+        setMounted(true);
+        setVisible(false);
+        const frame = window.requestAnimationFrame(() => setVisible(true));
+        return () => window.cancelAnimationFrame(frame);
+      }
+
+      setVisible(true);
+      return;
+    }
+
+    if (!mountedRef.current) return;
+
+    setVisible(false);
+    closeTimerRef.current = window.setTimeout(() => {
+      mountedRef.current = false;
+      closeTimerRef.current = null;
+      setMounted(false);
+    }, MODAL_ANIMATION_DURATION);
+
+    return () => {
+      if (closeTimerRef.current !== null) {
+        window.clearTimeout(closeTimerRef.current);
+        closeTimerRef.current = null;
+      }
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -84,18 +135,23 @@ export function Modal({ open, onClose, titleId, children, panelClassName, overla
     };
   }, [open]);
 
-  if (!open) return null;
+  if (!mounted) return null;
+
+  const animationState = visible ? "open" : "closed";
 
   return createPortal(
     <div
-      className={cn("fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4", overlayClassName)}
+      className={cn("app-modal-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4", overlayClassName)}
+      data-state={animationState}
       onClick={(event) => {
         if (event.target === event.currentTarget) onCloseRef.current();
       }}
     >
       <div
         ref={panelRef}
-        className={cn("max-h-[90vh] w-full overflow-auto rounded-lg border bg-card p-6 shadow-lg", panelClassName)}
+        className={cn("app-modal-panel max-h-[90vh] w-full overflow-auto rounded-lg border bg-card p-6 shadow-lg", panelClassName)}
+        data-motion={motion}
+        data-state={animationState}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}

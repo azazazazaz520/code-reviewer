@@ -217,8 +217,6 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
     }
   };
 
-  if (!open) return null;
-
   return (
     <Modal
       open={open}

@@ -68,6 +68,8 @@
 }
 
 :root {
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -165,6 +167,56 @@
 @utility border-l-severity-medium { border-left-color: var(--severity-medium); }
 @utility border-l-severity-low { border-left-color: var(--severity-low); }
 
+.app-modal-overlay {
+  opacity: 1;
+  transition: opacity 250ms var(--ease-out);
+}
+
+.app-modal-overlay[data-state="closed"] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.app-modal-panel {
+  opacity: 1;
+  transform: scale(1);
+  transform-origin: center;
+  transition:
+    opacity 250ms var(--ease-out),
+    transform 250ms var(--ease-out);
+}
+
+.app-modal-panel[data-state="closed"] {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+.app-modal-panel[data-motion="drawer"] {
+  transform: translateX(0);
+  transition:
+    opacity 250ms var(--ease-out),
+    transform 250ms var(--ease-drawer);
+}
+
+.app-modal-panel[data-motion="drawer"][data-state="closed"] {
+  transform: translateX(-100%);
+}
+
+.review-report-enter {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity 180ms var(--ease-out),
+    transform 180ms var(--ease-out);
+}
+
+@starting-style {
+  .review-report-enter {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -173,5 +225,16 @@
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
+  }
+
+  .app-modal-overlay,
+  .app-modal-panel,
+  .review-report-enter {
+    transition-duration: 180ms !important;
+  }
+
+  .app-modal-panel[data-state="closed"],
+  .review-report-enter {
+    transform: none;
   }
 }
