@@ -6,7 +6,6 @@
 - React/TypeScript、Python 代码中的新增或修改注释使用中文；注释应说明约束、原因或边界，不重复代码表面含义。
 - 修改前先阅读相关文件并确认影响范围。涉及审查流程、数据模型、数据库或桌面启动链路时，先阅读对应的设计文档。
 - 架构和数据流优先参考 `docs/system-design.md`；审查质量规则参考 `docs/review-quality-gate-implementation-plan.md`；桌面启动和打包参考 `docs/electron-desktop-implementation-plan.md`。
-- 需要理解代码时，优先使用 codegraph MCP；工具不可用时，再使用 `rg`、项目入口和测试建立代码上下文。
 - 不修改 `node_modules/`、`dist/`、`build/`、`release/` 等依赖或构建产物目录，除非用户明确要求。
 
 ## 项目结构与术语

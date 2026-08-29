@@ -411,7 +411,7 @@ export default function ReviewDetail() {
           <div className="space-y-2 border-t px-4 py-3 text-sm">
             {contextFindingCount > 0 && (
               <p className="text-muted-foreground">
-                {contextFindingCount} 条意见出现在修改文件的相邻代码中，请确认是否由本次提交引起。
+                {contextFindingCount} 条意见出现在修改文件的相邻代码中，请确认是否与本次提交相关联。
               </p>
             )}
             {filteredFindingCount > 0 && (
