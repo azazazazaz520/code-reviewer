@@ -12,16 +12,9 @@ import ReviewProgress from "../components/ReviewProgress";
 import ReviewHeader from "../components/ReviewHeader";
 import ErrorNotice from "../components/ErrorNotice";
 import ChangeDiffViewer from "../components/ChangeDiffViewer";
+import RiskDistributionChart from "../components/RiskDistributionChart";
 import { getSeverityConfig } from "../lib/severity";
 import { formatErrorMessage, formatReviewerName, toUserError, type UserErrorInfo } from "../utils/error-message";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 
 const riskVariantMap: Record<string, "critical" | "high" | "medium" | "low"> =
   {
@@ -507,78 +500,10 @@ export default function ReviewDetail() {
         </div>
       </div>
 
-      {/* Risk distribution chart */}
-      <div className="rounded-lg border bg-card p-4">
-        <h3 className="text-sm font-medium mb-3">风险分布</h3>
-        <ResponsiveContainer width="100%" height={180}>
-          <BarChart
-            data={[
-              {
-                name: "问题数",
-                critical: report.stats.by_severity.critical || 0,
-                high: report.stats.by_severity.high || 0,
-                medium: report.stats.by_severity.medium || 0,
-                low: report.stats.by_severity.low || 0,
-              },
-            ]}
-            layout="vertical"
-            margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
-          >
-            <XAxis type="number" hide />
-            <YAxis type="category" dataKey="name" hide />
-            <Tooltip
-              contentStyle={{
-                backgroundColor: "var(--card)",
-                border: "1px solid var(--border)",
-                borderRadius: "6px",
-                fontSize: "13px",
-              }}
-              labelStyle={{ color: "var(--foreground)" }}
-            />
-            <Bar
-              dataKey="critical"
-              stackId="a"
-              fill="var(--severity-critical)"
-              radius={[0, 0, 0, 0]}
-            />
-            <Bar
-              dataKey="high"
-              stackId="a"
-              fill="var(--severity-high)"
-            />
-            <Bar
-              dataKey="medium"
-              stackId="a"
-              fill="var(--severity-medium)"
-            />
-            <Bar
-              dataKey="low"
-              stackId="a"
-              fill="var(--severity-low)"
-              radius={[4, 4, 4, 4]}
-            />
-          </BarChart>
-        </ResponsiveContainer>
-        {/* Chart legend */}
-        <div className="flex flex-wrap gap-4 mt-2 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-severity-critical" />
-            严重: {report.stats.by_severity.critical || 0}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-severity-high" />
-            高危: {report.stats.by_severity.high || 0}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-severity-medium" />
-            中危: {report.stats.by_severity.medium || 0}
-          </span>
-          <span className="flex items-center gap-1.5">
-            <span className="w-3 h-3 rounded-sm bg-severity-low" />
-            低危: {report.stats.by_severity.low || 0}
-          </span>
-        </div>
-      </div>
+      <RiskDistributionChart
+        bySeverity={report.stats.by_severity}
+        totalFindings={report.stats.total_findings}
+      />
 
       {/* Severity filter pills */}
       <div className="flex flex-wrap gap-2">

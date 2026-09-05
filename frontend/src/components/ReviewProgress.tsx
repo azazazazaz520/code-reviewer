@@ -1,22 +1,41 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { Loader2, ChevronDown } from "lucide-react";
+import { Check, CircleAlert, ChevronDown, Loader2 } from "lucide-react";
 import type { ReviewLog } from "../types";
 import { formatErrorMessage } from "../utils/error-message";
 
+const reviewSteps = [
+  { key: "prepare_source", label: "准备审查来源" },
+  { key: "load_pr", label: "获取代码变更" },
+  { key: "collect_context", label: "收集上下文" },
+  { key: "planning", label: "规划策略" },
+  { key: "run_reviews", label: "执行审查" },
+  { key: "reflection", label: "反思" },
+  { key: "generate_report", label: "生成报告" },
+] as const;
+
 const stepLabels: Record<string, string> = {
-  prepare_source: "准备审查来源",
-  load_pr: "获取代码变更",
-  collect_context: "收集上下文",
-  planning: "规划策略",
-  run_reviews: "执行审查",
-  reflection: "反思",
-  generate_report: "生成报告",
+  ...Object.fromEntries(reviewSteps.map((step) => [step.key, step.label])),
   tool_call: "",
 };
 
 const MAX_VISIBLE = 50;
+type TimelineStatus = "waiting" | "running" | "done" | "failed";
+type TimelineStepStatus = "pending" | "active" | "done" | "failed";
+
+interface ReviewTimeline {
+  status: TimelineStatus;
+  activeIndex: number;
+  completedCount: number;
+  progress: number;
+  steps: Array<{
+    key: string;
+    label: string;
+    status: TimelineStepStatus;
+    detail: string;
+  }>;
+}
 
 interface ReviewProgressProps {
   logs: ReviewLog[];
@@ -25,6 +44,78 @@ interface ReviewProgressProps {
 
 function formatTime(iso: string) {
   return new Date(iso).toLocaleTimeString("zh-CN", { hour12: false });
+}
+
+function stepIndex(step: string | undefined) {
+  if (!step) return -1;
+  return reviewSteps.findIndex((item) => item.key === step);
+}
+
+function summarizeLogMessage(message: string) {
+  const normalized = message.replace(/\s+/g, " ").trim();
+  return normalized.length > 56 ? `${normalized.slice(0, 53)}...` : normalized;
+}
+
+function buildReviewTimeline(
+  logs: ReviewLog[],
+  isComplete: boolean,
+  isFailed: boolean,
+): ReviewTimeline {
+  const knownLogs = logs.filter((log) => stepIndex(log.step) >= 0);
+  const latestLog = knownLogs[knownLogs.length - 1];
+  const latestError = [...knownLogs]
+    .reverse()
+    .find((log) => log.level === "error");
+  const status: TimelineStatus = isComplete
+    ? "done"
+    : isFailed
+      ? "failed"
+      : logs.length === 0
+        ? "waiting"
+        : "running";
+  const activeIndex = status === "done"
+    ? reviewSteps.length - 1
+    : stepIndex(latestLog?.step) >= 0
+      ? stepIndex(latestLog?.step)
+      : 0;
+  const failedIndex = status === "failed"
+    ? stepIndex(latestError?.step) >= 0
+      ? stepIndex(latestError?.step)
+      : activeIndex
+    : -1;
+  const currentIndex = status === "failed" ? failedIndex : activeIndex;
+  const completedCount = status === "done"
+    ? reviewSteps.length
+    : Math.max(0, currentIndex);
+  const progress = status === "done"
+    ? 1
+    : completedCount / (reviewSteps.length - 1);
+
+  const steps = reviewSteps.map((step, index) => {
+    let stepStatus: TimelineStepStatus = "pending";
+    if (status === "done" || index < currentIndex) stepStatus = "done";
+    else if (status === "failed" && index === failedIndex) stepStatus = "failed";
+    else if (index === activeIndex) stepStatus = "active";
+
+    let detail = "等待前序阶段";
+    if (stepStatus === "done") detail = "已完成";
+    if (stepStatus === "failed") {
+      detail = latestError?.step === step.key
+        ? summarizeLogMessage(formatErrorMessage(latestError.message))
+        : "执行失败";
+    }
+    if (stepStatus === "active") {
+      detail = status === "waiting"
+        ? "等待执行"
+        : latestLog?.step === step.key
+          ? summarizeLogMessage(formatErrorMessage(latestLog.message))
+          : "执行中";
+    }
+
+    return { ...step, status: stepStatus, detail };
+  });
+
+  return { status, activeIndex, completedCount, progress, steps };
 }
 
 export default function ReviewProgress({
@@ -84,7 +175,22 @@ export default function ReviewProgress({
     logs.length > 0 && logs[logs.length - 1].message === "审查完成";
   const isFailed = !logPolling && !isComplete && logs.length > 0;
 
-  // When running, show logs; when complete/failed, collapsed by default
+  const timeline = buildReviewTimeline(logs, isComplete, isFailed);
+  const timelineStatusText = timeline.status === "done"
+    ? "审查完成"
+    : timeline.status === "failed"
+      ? "审查失败"
+      : timeline.status === "waiting"
+        ? "等待执行"
+        : "审查进行中";
+  const currentStep = timeline.steps[timeline.activeIndex];
+  const timelineDetail = timeline.status === "done"
+    ? "所有阶段已完成"
+    : timeline.status === "failed"
+      ? `失败阶段：${currentStep?.label ?? "未知阶段"}`
+      : `当前阶段：${currentStep?.label ?? "准备审查来源"}`;
+
+  // 审查执行时展开日志，结束后默认折叠。
   const showLogs = logPolling || expanded;
 
   const displayLogs = expanded ? logs : logs.slice(-MAX_VISIBLE);
@@ -112,8 +218,7 @@ export default function ReviewProgress({
         <CardTitle className={`text-base ${statusColor}`}>
           {logPolling ? (
             <span className="flex items-center gap-2">
-              {!isComplete && <Loader2 className="h-4 w-4 animate-spin" />}
-              {isComplete ? "审查完成" : "审查进行中"}
+              {timelineStatusText}
             </span>
           ) : (
             <button
@@ -135,6 +240,54 @@ export default function ReviewProgress({
           )}
         </CardTitle>
       </CardHeader>
+
+      <section className="review-progress-timeline-section" aria-labelledby="review-progress-timeline-title">
+        <h3 id="review-progress-timeline-title" className="sr-only">审查阶段进度</h3>
+        <div
+          className="review-progress-timeline"
+          role="progressbar"
+          aria-label="审查阶段进度"
+          aria-valuemin={0}
+          aria-valuemax={reviewSteps.length}
+          aria-valuenow={timeline.completedCount}
+        >
+          <div className="review-progress-timeline-list-wrap">
+            <div className="review-progress-timeline-track" aria-hidden="true">
+              <div
+                className={`review-progress-timeline-track-fill ${timeline.status === "failed" ? "review-progress-timeline-track-fill-failed" : ""}`}
+                style={{ transform: `scaleY(${Math.min(timeline.progress, 1)})` }}
+              />
+            </div>
+            <ol className="review-progress-timeline-list">
+              {timeline.steps.map((step) => (
+                <li
+                  key={step.key}
+                  className="review-progress-timeline-step"
+                  data-status={step.status}
+                  aria-current={step.status === "active" ? "step" : undefined}
+                >
+                  <div className="review-progress-timeline-node" aria-hidden="true">
+                    {step.status === "done" && <Check className="h-3.5 w-3.5" />}
+                    {step.status === "failed" && <CircleAlert className="h-3.5 w-3.5" />}
+                    {step.status === "active" && (
+                      <Loader2 className="review-progress-timeline-spinner h-3.5 w-3.5 animate-spin" />
+                    )}
+                    {step.status === "pending" && <span className="h-1.5 w-1.5 rounded-full bg-current" />}
+                  </div>
+                  <div className="review-progress-timeline-step-copy">
+                    <span className="review-progress-timeline-step-label">{step.label}</span>
+                    <span className="review-progress-timeline-step-detail">{step.detail}</span>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="review-progress-timeline-footer">
+            <span>{timeline.completedCount} / {reviewSteps.length} 个阶段已完成</span>
+            <span>{timelineDetail}</span>
+          </div>
+        </div>
+      </section>
 
       {showLogs && (
         <CardContent>
