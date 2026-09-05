@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Archive, Plus } from "lucide-react";
+import { Archive, CheckCircle2, Plus } from "lucide-react";
 import type { OverviewStats, ReviewTask, HeatmapData } from "../types";
 import { statsApi } from "../api/stats";
 import { reviewApi } from "../api/reviews";
@@ -47,28 +47,37 @@ export default function Dashboard() {
   const [statsLoading, setStatsLoading] = useState(true);
   const [actionPendingId, setActionPendingId] = useState<string | null>(null);
   const [actionError, setActionError] = useState<UserErrorInfo | null>(null);
+  const [archiveNoticeKey, setArchiveNoticeKey] = useState(0);
 
-  const loadStats = useCallback(async () => {
-    setStatsLoading(true);
+  const loadStats = useCallback(async (showLoading = true) => {
+    if (showLoading) setStatsLoading(true);
     setStatsError(null);
     try {
       const res = await statsApi.overview();
       setStats(res.data);
     } catch (error) {
-      console.error("Failed to load dashboard stats:", error);
-      setStatsError(toUserError(error, "无法加载仪表盘数据"));
+      if (showLoading) {
+        console.error("Failed to load dashboard stats:", error);
+        setStatsError(toUserError(error, "无法加载仪表盘数据"));
+      } else {
+        console.error("Failed to refresh dashboard stats:", error);
+      }
     } finally {
-      setStatsLoading(false);
+      if (showLoading) setStatsLoading(false);
     }
   }, []);
 
-  const loadHeatmap = useCallback(async () => {
+  const loadHeatmap = useCallback(async (showError = true) => {
     setHeatmapError(null);
     try {
       const res = await statsApi.heatmap();
       setHeatmap(res.data);
     } catch (error) {
-      setHeatmapError(toUserError(error, "无法加载审查活动数据"));
+      if (showError) {
+        setHeatmapError(toUserError(error, "无法加载审查活动数据"));
+      } else {
+        console.error("Failed to refresh dashboard heatmap:", error);
+      }
     }
   }, []);
 
@@ -79,13 +88,28 @@ export default function Dashboard() {
     setActionError(null);
     try {
       await reviewApi.archive(review.id);
-      await Promise.all([loadStats(), loadHeatmap()]);
+      setStats((current) =>
+        current
+          ? {
+              ...current,
+              recent_reviews: current.recent_reviews.filter((item) => item.id !== review.id),
+            }
+          : current,
+      );
+      setArchiveNoticeKey((key) => key + 1);
+      void Promise.all([loadStats(false), loadHeatmap(false)]);
     } catch (error) {
       setActionError(toUserError(error, "归档审查记录失败"));
     } finally {
       setActionPendingId(null);
     }
   };
+
+  useEffect(() => {
+    if (archiveNoticeKey === 0) return;
+    const timeoutId = window.setTimeout(() => setArchiveNoticeKey(0), 2600);
+    return () => window.clearTimeout(timeoutId);
+  }, [archiveNoticeKey]);
 
   useEffect(() => {
     void loadStats();
@@ -191,7 +215,7 @@ export default function Dashboard() {
           <CardTitle className="text-base">最近审查</CardTitle>
         </CardHeader>
         {actionError && (
-          <ErrorNotice error={actionError} compact className="mx-6 mb-3" />
+          <ErrorNotice title="归档失败" error={actionError} compact className="mx-6 mb-3" />
         )}
         <CardContent className="p-0">
           <Table className="min-w-[760px]">
@@ -296,6 +320,18 @@ export default function Dashboard() {
       </Card>
 
       <SubmitReviewModal open={modalOpen} onClose={() => setModalOpen(false)} />
+      {archiveNoticeKey > 0 && (
+        <div
+          className="pointer-events-none fixed inset-x-4 bottom-4 z-50 flex justify-center sm:inset-x-auto sm:right-6"
+          role="status"
+          aria-live="polite"
+        >
+          <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-background/95 px-4 py-2 text-sm font-medium text-emerald-700 shadow-lg backdrop-blur dark:text-emerald-300">
+            <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
+            <span>已归档</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

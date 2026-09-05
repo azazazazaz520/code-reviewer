@@ -95,6 +95,20 @@ describe("Settings", () => {
     expect(screen.getByText("未配置")).toBeInTheDocument();
   });
 
+  it("切换设置分区不修改应用窗口标题", () => {
+    document.title = "Code Reviewer";
+
+    render(
+      <ThemeProvider>
+        <Settings />
+      </ThemeProvider>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /审查行为/ }));
+
+    expect(document.title).toBe("Code Reviewer");
+  });
+
   it("主题立即生效并保持本地偏好，浏览器模式显示路径能力限制", () => {
     render(
       <ThemeProvider>

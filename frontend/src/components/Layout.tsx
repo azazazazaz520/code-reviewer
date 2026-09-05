@@ -63,7 +63,7 @@ export default function AppLayout() {
         )}
       </div>
 
-      <nav className="flex-1 p-2 space-y-1" aria-label="主导航">
+      <nav className="min-h-0 flex-1 overflow-y-auto p-2 space-y-1" aria-label="主导航">
         {navItems.map((item) => {
           const Icon = item.icon;
           const active = isActive(item.path);
@@ -96,7 +96,7 @@ export default function AppLayout() {
   );
 
   return (
-    <div className="min-h-screen bg-background md:flex">
+    <div className="min-h-screen bg-background md:flex md:h-screen md:overflow-hidden">
       <header className="sticky top-0 z-30 flex h-12 items-center gap-3 border-b bg-background/95 px-4 backdrop-blur md:hidden">
         <Button
             variant="ghost"
@@ -111,7 +111,7 @@ export default function AppLayout() {
       </header>
 
       <aside
-        className={`hidden md:flex flex-col bg-card border-r shrink-0 transition-all duration-200 ${
+        className={`hidden h-full shrink-0 overflow-hidden md:flex flex-col bg-card border-r transition-all duration-200 ${
           collapsed ? "w-16" : "w-56"
         }`}
       >
@@ -163,7 +163,7 @@ export default function AppLayout() {
             </nav>
       </Modal>
 
-      <main data-app-background className="flex-1 min-w-0 overflow-auto">
+      <main data-app-background className="flex-1 min-w-0 md:h-full md:min-h-0 md:overflow-x-hidden md:overflow-y-auto">
         <div className="mx-auto w-full max-w-7xl p-4 sm:p-6">
           <Outlet />
         </div>

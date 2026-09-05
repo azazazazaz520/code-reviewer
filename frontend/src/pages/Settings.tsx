@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import ErrorNotice from "../components/ErrorNotice";
 import { Card, CardContent } from "../components/ui/card";
@@ -36,10 +36,6 @@ function LoadingState() {
 export default function Settings() {
   const [activeSection, setActiveSection] = useState<SettingsSection>("appearance");
   const { snapshot, runtime, sidecarState, runtimeError, loading, error, reload, save } = useSettings();
-
-  useEffect(() => {
-    document.title = `${sectionTitles[activeSection]} · 设置 · Code Reviewer`;
-  }, [activeSection]);
 
   const renderSection = () => {
     if (!snapshot) return null;
@@ -85,14 +81,9 @@ export default function Settings() {
       {runtimeError && !error && <ErrorNotice error={runtimeError} title="桌面运行时信息不可用" compact />}
 
       {loading && !snapshot ? <LoadingState /> : snapshot ? (
-        <div className="grid gap-6 md:grid-cols-[minmax(13rem,16rem)_minmax(0,1fr)]">
+        <div className="grid gap-6 md:grid-cols-[minmax(13rem,8rem)_minmax(0,1fr)]">
           <aside className="md:sticky md:top-6 md:self-start">
             <SettingsNavigation activeSection={activeSection} onChange={setActiveSection} />
-            <Card className="mt-4 hidden border-border/80 bg-muted/30 shadow-none md:block">
-              <CardContent className="p-4 text-xs leading-5 text-muted-foreground">
-                修改设置后请点击对应分区的“保存设置”，新请求会按保存后的配置运行。
-              </CardContent>
-            </Card>
           </aside>
           <section aria-labelledby="settings-section-title" className="min-w-0">
             <h2 id="settings-section-title" className="sr-only">{sectionTitles[activeSection]}</h2>

@@ -242,7 +242,7 @@ export default function SubmitReviewModal({ open, onClose, preSelectedRepoId }: 
 
         <div>
           <span className="text-sm font-medium block mb-1">审查类型</span>
-          <div className="flex rounded-md border h-10 w-fit" role="group" aria-label="审查类型">
+          <div className="flex min-h-11 w-fit rounded-md border" role="group" aria-label="审查类型">
             {isWorkspaceRepo ? <>
               <button type="button" className={`min-h-11 px-4 text-sm rounded-l-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "workspace" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("workspace")} aria-pressed={reviewType === "workspace"}>未提交改动</button>
               <button type="button" className={`min-h-11 px-4 text-sm rounded-r-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${reviewType === "local" ? "bg-primary text-primary-foreground" : "bg-background"}`} onClick={() => setReviewType("local")} aria-pressed={reviewType === "local"}>指定 Commit</button>

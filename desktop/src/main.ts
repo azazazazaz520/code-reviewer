@@ -84,6 +84,11 @@ async function startApplication(): Promise<void> {
     },
   });
 
+  mainWindow.webContents.on("page-title-updated", (event) => {
+    event.preventDefault();
+    mainWindow?.setTitle("Code Reviewer");
+  });
+
   mainWindow.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error(`[desktop] preload failed: ${preloadPath}`, error);
   });
