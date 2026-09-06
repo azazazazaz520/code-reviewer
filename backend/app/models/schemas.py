@@ -108,6 +108,10 @@ class FindingSchema(BaseModel):
     reason: str
     suggestion: str
     evidence_type: str = "reviewer"
+    evidence: str | None = None
+    evidence_refs: list[dict[str, Any]] = Field(default_factory=list)
+    impact: str | None = None
+    confidence: float | None = None
 
 
 class ReviewStats(BaseModel):
@@ -131,9 +135,55 @@ class ReviewQualityMetrics(BaseModel):
     located_findings: int = 0
     static_evidence_findings: int = 0
     reviewer_context_findings: int = 0
+    filtered_reasons: dict[str, int] = Field(default_factory=dict)
+    database_id: str | None = None
+    database_status: str | None = None
+    extraction_status: str | None = None
+    extraction_planned_files: int = 0
+    extracted_files: int = 0
+    extraction_errors: list[dict[str, Any]] = Field(default_factory=list)
+    query_results: int = 0
+    context_errors: dict[str, str] = Field(default_factory=dict)
+    tool_errors: int = 0
+    planned_files: int = 0
+    covered_files: int = 0
+    uncovered_files: list[str] = Field(default_factory=list)
+    planned_hunks: int = 0
+    covered_hunks: int = 0
+    context_covered_hunks: int = 0
+    uncovered_hunks: list[str] = Field(default_factory=list)
+    truncated_inputs: int = 0
+    coverage_status: str | None = None
+    planned_units: int = 0
+    reviewed_units: int = 0
+    completed_units: int = 0
+    attempted_units: int = 0
+    pending_units: int = 0
+    planned_assignments: int = 0
+    planned_reviewer_assignments: int = 0
+    reviewed_reviewer_assignments: int = 0
+    completed_assignments: int = 0
+    pending_assignments: int = 0
+    pending_reviewer_assignments: int = 0
+    pending_unit_ids: list[str] = Field(default_factory=list)
+    primary_llm_calls: int = 0
+    tool_calls: int = 0
+    tool_requests: int = 0
+    cache_hits: int = 0
+    cache_misses: int = 0
+    read_file_requests: int = 0
+    read_file_cache_hits: int = 0
+    read_file_cache_misses: int = 0
+    read_file_errors: int = 0
+    tool_budget_exhausted: bool = False
+    elapsed_seconds: float = 0
+    budget_exhausted: bool = False
+    budget_exhausted_reason: str | None = None
+    cancel_requested: bool = False
 
 
 class ReviewerOutputAttempt(BaseModel):
+    unit_id: str | None = None
     stage: str
     output: str
     truncated: bool = False
@@ -144,6 +194,7 @@ class ReviewerOutputAttempt(BaseModel):
 class ReviewerOutputTrace(BaseModel):
     attempts: list[ReviewerOutputAttempt] = Field(default_factory=list)
     candidate_findings: list[dict[str, Any]] = Field(default_factory=list)
+    input_coverage: dict[str, Any] = Field(default_factory=dict)
     error_message: str | None = None
 
 
@@ -178,6 +229,7 @@ class ReportContent(BaseModel):
     quality: ReviewQualityMetrics = Field(default_factory=ReviewQualityMetrics)
     reviewer_outputs: dict[str, ReviewerOutputTrace] = Field(default_factory=dict)
     changes: ReviewChanges = Field(default_factory=ReviewChanges)
+    code_database: dict[str, Any] = Field(default_factory=dict)
 
 
 # ─── 统计 ──────────────────────────────────────────

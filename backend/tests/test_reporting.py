@@ -52,8 +52,56 @@ class DeriveReviewStatusTests(unittest.TestCase):
             "degraded",
         )
 
+    def test_tool_errors_and_input_truncation_are_degraded(self):
+        self.assertEqual(
+            derive_review_status([], {"tool_errors": 1}),
+            "degraded",
+        )
+        self.assertEqual(
+            derive_review_status([], {"truncated_inputs": 1}),
+            "degraded",
+        )
+
+    def test_incomplete_database_or_coverage_is_degraded(self):
+        self.assertEqual(
+            derive_review_status([], {"database_status": "failed"}),
+            "degraded",
+        )
+        self.assertEqual(
+            derive_review_status([], {"coverage_status": "incomplete"}),
+            "degraded",
+        )
+        self.assertEqual(
+            derive_review_status([], {"uncovered_files": ["src/app.py"]}),
+            "degraded",
+        )
+
+    def test_pending_reviewer_assignments_are_degraded(self):
+        self.assertEqual(
+            derive_review_status(
+                [],
+                {
+                    "coverage_status": "complete",
+                    "pending_reviewer_assignments": 1,
+                },
+            ),
+            "degraded",
+        )
+
     def test_clean_run_is_complete(self):
         self.assertEqual(derive_review_status([], {"truncated_outputs": 0}), "complete")
+
+    def test_model_decision_errors_do_not_degrade_review(self):
+        self.assertEqual(
+            derive_review_status(
+                [],
+                {
+                    "coverage_status": "complete",
+                    "model_decision_errors": 1,
+                },
+            ),
+            "complete",
+        )
 
 
 class BuildSummaryTests(unittest.TestCase):
@@ -73,6 +121,7 @@ class BuildReportTests(unittest.TestCase):
                     "title": "缺少边界检查",
                     "reason": "原因",
                     "suggestion": "建议",
+                    "impact": "behavior",
                 }
             ],
             "workflow_errors": [],
@@ -103,6 +152,18 @@ class BuildReportTests(unittest.TestCase):
         self.assertEqual(report["checks"][0]["name"], "finding_gate")
         self.assertEqual(report["quality"]["candidate_findings"], 1)
         self.assertIn("style_reviewer", report["reviewer_outputs"])
+
+    def test_report_includes_code_database_metadata(self):
+        state = self._sample_state()
+        state["code_database_info"] = {
+            "database_id": "db-1",
+            "database_status": "ready",
+            "extraction_status": "complete",
+        }
+
+        report = build_report(state)
+
+        self.assertEqual(report["code_database"]["database_id"], "db-1")
 
     def test_changes_contract_fields(self):
         report = build_report(self._sample_state())

@@ -7,9 +7,20 @@ class Settings(BaseSettings):
 
     # 审查引擎
     max_reflection_rounds: int = 3
+    max_incremental_reflection_rounds: int = 1
     reviewer_timeout_seconds: int = 120
     review_worker_poll_seconds: float = 1.0
     context_files_per_round: int = 20
+    review_unit_max_chars: int = 24000
+    review_context_max_files: int = 10
+    review_context_max_chars: int = 24000
+    review_context_padding_lines: int = 80
+    max_review_calls: int = 48
+    max_review_duration_seconds: int = 1200
+    max_tool_rounds: int = 2
+    max_tool_calls_per_unit: int = 4
+    max_related_files_per_unit: int = 4
+    review_parallelism: int = 3
 
     # 提示词工作区
     prompt_timeout_seconds: int = 60

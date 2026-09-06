@@ -44,6 +44,7 @@ def _finding(
     title: str,
     reason: str,
     suggestion: str,
+    evidence: str,
 ) -> dict:
     return {
         "severity": "medium",
@@ -52,6 +53,7 @@ def _finding(
         "title": title,
         "reason": reason,
         "suggestion": suggestion,
+        "evidence": evidence,
         "evidence_type": "static_check",
         "impact": "compatibility",
     }
@@ -82,6 +84,7 @@ def validate_release_manifest(
                 title="发布清单无法读取",
                 reason=f"确定性校验器无法读取文件：{exc}",
                 suggestion="确认审查快照包含该发布清单文件。",
+                evidence=f"文件读取错误：{exc}",
             )
         )
         return result
@@ -96,6 +99,7 @@ def validate_release_manifest(
                 title="发布清单不是合法 JSON",
                 reason=f"JSON 解析失败：{exc.msg}",
                 suggestion="修正 JSON 语法后再发布更新清单。",
+                evidence=f"第 {exc.lineno} 行第 {exc.colno} 列解析失败：{exc.msg}",
             )
         )
         result.checks.append(
@@ -115,6 +119,7 @@ def validate_release_manifest(
                 title="发布清单根节点类型错误",
                 reason="发布清单根节点必须是 JSON 对象。",
                 suggestion="将发布清单改为包含版本字段的 JSON 对象。",
+                evidence=f"JSON 根节点实际类型：{type(payload).__name__}",
             )
         )
         return result
@@ -128,6 +133,7 @@ def validate_release_manifest(
                 title="发布清单缺少必填字段",
                 reason=f"缺少字段：{', '.join(missing)}。",
                 suggestion="补齐发布客户端所需的必填字段。",
+                evidence=f"缺失字段列表：{', '.join(missing)}",
             )
         )
         result.checks.append(
@@ -155,6 +161,7 @@ def validate_release_manifest(
                 title="版本号格式无效",
                 reason="version 不符合项目使用的三段式版本格式。",
                 suggestion="使用形如 0.4.2 或带预发布标识的合法版本号。",
+                evidence=f"version 实际值：{version!r}",
             )
         )
         result.checks.append(
@@ -174,6 +181,10 @@ def validate_release_manifest(
                 title="SHA256 格式无效",
                 reason="sha256 必须是 64 位十六进制校验和。",
                 suggestion="从实际发布安装包重新计算并写入 SHA256。",
+                evidence=(
+                    f"sha256 实际类型：{type(sha256).__name__}，"
+                    f"长度：{len(sha256) if isinstance(sha256, str) else 0}"
+                ),
             )
         )
         result.checks.append(
@@ -208,6 +219,7 @@ def validate_release_manifest(
                     title=f"{field_name} 与版本号不一致",
                     reason=f"{field_name} 未包含当前版本标识 {expected}。",
                     suggestion="使地址中的版本标识与 version 字段保持一致。",
+                    evidence=f"{field_name} 实际值：{value!r}；期望包含：{expected}",
                 )
             )
             result.checks.append(
@@ -239,6 +251,7 @@ def validate_release_manifest(
                 title="release_date 格式无效",
                 reason=f"release_date 不是合法 ISO 时间：{exc}。",
                 suggestion="使用带时区的 ISO 8601 时间。",
+                evidence=f"release_date 实际值：{release_date!r}；解析错误：{exc}",
             )
         )
         result.checks.append(

@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
+from app.engine.paths import normalize_relative_path
+
 
 @dataclass(frozen=True)
 class ChangeScope:
@@ -55,7 +57,7 @@ DEPENDENCY_LOCK_FILES = {
 
 
 def _normalise(path: str) -> str:
-    return path.replace("\\", "/").lstrip("./")
+    return normalize_relative_path(path)
 
 
 def classify_file(path: str) -> ChangeScope:
