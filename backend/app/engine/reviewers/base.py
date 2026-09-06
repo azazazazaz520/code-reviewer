@@ -173,6 +173,10 @@ def _record_llm_usage(
         "dynamic_suffix_hash": coverage.get("dynamic_suffix_hash"),
         "stable_prefix_chars": coverage.get("stable_prefix_chars", 0),
         "dynamic_suffix_chars": coverage.get("dynamic_suffix_chars", 0),
+        "cache_session_reused": bool(coverage.get("cache_session_reused")),
+        "session_scope": coverage.get("session_scope", "review_unit"),
+        "session_rebuilt": bool(coverage.get("session_rebuilt")),
+        "session_history_messages": coverage.get("session_history_messages", 0),
     }
     for response_key, metric_key in LLM_USAGE_METRIC_FIELDS.items():
         value = usage.get(response_key)
@@ -225,6 +229,8 @@ class ReviewerContext:
     task_id: str = ""
     reviewer_name: str = ""
     llm_usage_state: dict = field(default_factory=dict)
+    # 保留字段以兼容旧调用方；审查流程不会读取或写入跨 ReviewUnit 历史。
+    llm_history: list[dict] | None = None
 
 
 class BaseReviewer(ABC):
@@ -458,10 +464,16 @@ class BaseReviewer(ABC):
 
         if context.file_context:
             ctx_parts = []
+            shared_paths = {
+                self._display_path(context, file_path)
+                for file_path in context.shared_file_context
+            }
             for fp in sorted(
                 context.file_context,
                 key=lambda path: self._display_path(context, path),
             ):
+                if self._display_path(context, fp) in shared_paths:
+                    continue
                 content = context.file_context[fp]
                 display_path = self._display_path(context, fp)
                 file_limit = max(1, settings.review_context_max_chars)
@@ -481,6 +493,13 @@ class BaseReviewer(ABC):
         dynamic_content = "\n\n".join(dynamic_parts)
         context.input_coverage.update(
             {
+                # 每个 ReviewUnit 都从相同稳定前缀重新创建本地 Session；
+                # DeepSeek 服务端仍可根据该前缀命中 KV Cache。
+                "cache_session_reused": False,
+                "session_scope": "review_unit",
+                "session_rebuilt": True,
+                "session_rebuilds": 1,
+                "session_history_messages": 0,
                 "stable_prefix_hash": hashlib.sha256(
                     json.dumps(
                         [
@@ -501,6 +520,7 @@ class BaseReviewer(ABC):
         user_content = "\n\n".join(
             part for part in (stable_content, dynamic_content) if part
         )
+
         return [
             {
                 "role": "system",
@@ -545,16 +565,19 @@ class BaseReviewer(ABC):
                 )
 
         if tools and handlers:
+            tool_call_kwargs = {
+                "max_rounds": settings.max_tool_rounds,
+                "max_tool_calls": settings.max_tool_calls_per_unit,
+                "timeout_seconds": settings.reviewer_timeout_seconds,
+                "cancel_check": context.cancel_check,
+                "log_hook": context.log_hook,
+                "response_meta_hook": capture_metadata,
+            }
             output = self.llm.chat_with_tools(
                 messages,
                 tools,
                 handlers,
-                max_rounds=settings.max_tool_rounds,
-                max_tool_calls=settings.max_tool_calls_per_unit,
-                timeout_seconds=settings.reviewer_timeout_seconds,
-                cancel_check=context.cancel_check,
-                log_hook=context.log_hook,
-                response_meta_hook=capture_metadata,
+                **tool_call_kwargs,
             )
         else:
             if context.cancel_check and context.cancel_check():
@@ -726,7 +749,7 @@ class BaseReviewer(ABC):
                         "将下面的审查结果转换为合法 JSON 对象。每个 Finding 保留原有的"
                         " severity、file、line、title、reason、suggestion、evidence、impact 字段。"
                         "只返回 {\"findings\":[...]}，不要 Markdown、解释文字或代码围栏。\n\n"
-                        f"原始审查结果：\n{llm_output[:12000]}"
+                        f"原始审查结果：\n{llm_output}"
                     ),
                 },
             ]

@@ -11,9 +11,10 @@ class Settings(BaseSettings):
     reviewer_timeout_seconds: int = 120
     review_worker_poll_seconds: float = 1.0
     context_files_per_round: int = 20
-    review_unit_max_chars: int = 24000
-    review_context_max_files: int = 10
-    review_context_max_chars: int = 24000
+    # V4 Flash 支持 1M 上下文；审查上下文上限使用字符预算，给消息封装和输出预留空间。
+    review_unit_max_chars: int = 100000
+    review_context_max_files: int = 500
+    review_context_max_chars: int = 2000000
     review_context_padding_lines: int = 80
     max_review_calls: int = 48
     max_review_duration_seconds: int = 1200
@@ -33,12 +34,11 @@ class Settings(BaseSettings):
 
     # LLM
     llm_provider: str = "deepseek"
-    # DeepSeek 旧模型名已进入下线周期；使用显式模型名，便于建立独立缓存基线。
     llm_model: str = "deepseek-v4-flash"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 4096
     deepseek_api_key: str = ""
-    deepseek_base_url: str = "https://api.deepseek.com/v1"
+    deepseek_base_url: str = "https://api.deepseek.com"
 
     # GitHub
     github_token: str = ""

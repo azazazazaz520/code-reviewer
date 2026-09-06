@@ -83,9 +83,9 @@ export default function ReviewSettings({ snapshot, onSaved }: ReviewSettingsProp
         <SettingsInput label="最大反思轮数" type="number" min={1} max={20} value={maxRounds} onChange={setMaxRounds} description="限制审查反思阶段的最大执行轮次。" />
         <SettingsInput label="增量反思轮数" type="number" min={0} max={10} value={maxIncrementalRounds} onChange={setMaxIncrementalRounds} description="上下文补充后允许新增审查单元的轮数。" />
         <SettingsInput label="每轮上下文文件数" type="number" min={1} max={200} value={filesPerRound} onChange={setFilesPerRound} description="每轮加入审查上下文的文件数量。" />
-        <SettingsInput label="单元最大字符数" type="number" min={8000} max={100000} value={unitMaxChars} onChange={setUnitMaxChars} description="单个语义审查单元允许携带的最大 Diff 字符数。" />
-        <SettingsInput label="上下文最大文件数" type="number" min={1} max={50} value={contextMaxFiles} onChange={setContextMaxFiles} description="单个审查单元中可直接提供给模型的文件数量。" />
-        <SettingsInput label="上下文最大字符数" type="number" min={8000} max={100000} value={contextMaxChars} onChange={setContextMaxChars} description="单个审查单元关联代码的最大字符数。" />
+        <SettingsInput label="单元最大字符数" type="number" min={8000} max={500000} value={unitMaxChars} onChange={setUnitMaxChars} description="单个语义审查单元允许携带的最大 Diff 字符数。" />
+        <SettingsInput label="上下文最大文件数" type="number" min={1} max={500} value={contextMaxFiles} onChange={setContextMaxFiles} description="单次审查可放入稳定上下文的文件数量。" />
+        <SettingsInput label="上下文最大字符数" type="number" min={8000} max={2000000} value={contextMaxChars} onChange={setContextMaxChars} description="单次审查稳定代码上下文的最大字符数，V4 Flash 支持 1M Token 上下文。" />
         <SettingsInput label="变更区域前后文行数" type="number" min={0} max={500} value={paddingLines} onChange={setPaddingLines} description="变更 Hunk 两侧预取的源码行数。" />
         <SettingsInput label="任务最大模型调用数" type="number" min={1} max={500} value={maxReviewCalls} onChange={setMaxReviewCalls} description="单个任务允许执行的 Reviewer 主调用数。" />
         <SettingsInput label="任务最大执行秒数" type="number" min={60} max={7200} value={maxDuration} onChange={setMaxDuration} description="达到时限后停止新增审查调用并保存部分结果。" />

@@ -38,8 +38,8 @@ const snapshot: EffectiveSettingsSnapshot = {
   settings: {
     llm: {
       provider: "deepseek-openai-compatible",
-      model: "deepseek-chat",
-      base_url: "https://api.deepseek.com/v1",
+      model: "deepseek-v4-flash",
+      base_url: "https://api.deepseek.com",
       temperature: 0.1,
       max_tokens: 4096,
     },
@@ -48,9 +48,9 @@ const snapshot: EffectiveSettingsSnapshot = {
       max_incremental_reflection_rounds: 1,
       context_files_per_round: 20,
       crg_enabled: true,
-      review_unit_max_chars: 24000,
-      review_context_max_files: 10,
-      review_context_max_chars: 24000,
+      review_unit_max_chars: 100000,
+      review_context_max_files: 500,
+      review_context_max_chars: 2000000,
       review_context_padding_lines: 80,
       max_review_calls: 48,
       max_review_duration_seconds: 1200,
@@ -115,7 +115,7 @@ describe("Settings", () => {
     expect(screen.getByText("跟随系统")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /模型服务/ }));
-    expect(screen.getByDisplayValue("deepseek-chat")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("deepseek-v4-flash")).toBeInTheDocument();
     expect(screen.getByText("当前来源：环境配置")).toBeInTheDocument();
     expect(screen.getByText("模型服务 API Key")).toBeInTheDocument();
     expect(screen.getByText("未配置")).toBeInTheDocument();

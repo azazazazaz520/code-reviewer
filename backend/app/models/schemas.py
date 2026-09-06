@@ -174,6 +174,7 @@ class ReviewQualityMetrics(BaseModel):
     llm_prompt_cache_hit_tokens: int = 0
     llm_prompt_cache_miss_tokens: int = 0
     llm_prompt_cache_hit_rate: float = 0
+    session_rebuilds: int = 0
     tool_calls: int = 0
     tool_requests: int = 0
     cache_hits: int = 0

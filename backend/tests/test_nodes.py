@@ -514,7 +514,10 @@ class RunReviewsNodeTests(unittest.TestCase):
             "src/b.py": "b" * 7000,
         }
 
-        result = run_reviews_node(state)
+        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
+            settings, "review_context_max_chars", 12000
+        ):
+            result = run_reviews_node(state)
 
         self.assertEqual(len(reviewer.contexts), 2)
         self.assertEqual(result["coverage"]["truncated_inputs"], 0)
@@ -523,7 +526,10 @@ class RunReviewsNodeTests(unittest.TestCase):
             for context in reviewer.contexts
         ))
 
-        run_reviews_node(state)
+        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
+            settings, "review_context_max_chars", 12000
+        ):
+            run_reviews_node(state)
         self.assertEqual(len(reviewer.contexts), 2)
         self.assertEqual(state["coverage"]["truncated_inputs"], 0)
 
@@ -537,7 +543,8 @@ class RunReviewsNodeTests(unittest.TestCase):
             "src/b.py": "b" * 7000,
         }
 
-        run_reviews_node(state)
+        with mock.patch.object(settings, "review_unit_max_chars", REVIEW_DIFF_BATCH_CHARS):
+            run_reviews_node(state)
 
         self.assertEqual(len(reviewer.contexts), 3)
 
@@ -550,7 +557,10 @@ class RunReviewsNodeTests(unittest.TestCase):
             "src/b.py": "b" * 7000,
         }
 
-        result = run_reviews_node(state)
+        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
+            settings, "review_context_max_chars", 12000
+        ):
+            result = run_reviews_node(state)
 
         trace = result["reviewer_outputs"]["style_reviewer"]["input_coverage"]
         self.assertEqual(

@@ -77,7 +77,7 @@ def _iter_review_assignments(state: ReviewState, reviewer_name: str) -> Iterable
             state.get("file_context_cache", {}),
             state.get("changed_files", []),
             reviewer_name,
-            max_chars=12000,
+            max_chars=settings.review_context_max_chars,
         )
         pairs = pair_reviewer_batches(
             [unit.get("diff", "") for unit in units],
@@ -228,6 +228,7 @@ def _merge_input_coverage(target: dict, incoming: dict) -> None:
                 "tool_cache_hits",
                 "tool_cache_misses",
                 "provider_requests",
+                "session_rebuilds",
                 *LLM_USAGE_METRIC_FIELDS.values(),
             }:
                 target[key] = target.get(key, 0) + value
@@ -276,7 +277,7 @@ def _execute_reviewer_group(
     cancel_check,
     budget,
 ) -> dict:
-    """在一个线程内串行执行同一 Reviewer，便于跨 Reviewer 并行。"""
+    """串行执行同一 Reviewer，每个 ReviewUnit 使用独立消息 Session。"""
     trace = {
         "attempts": list(previous_trace.get("attempts", [])),
         "candidate_findings": list(previous_trace.get("candidate_findings", [])),

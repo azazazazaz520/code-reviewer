@@ -34,11 +34,11 @@ class ContextSelection:
 
 
 REVIEWER_CONTEXT_BUDGETS = {
-    "security_reviewer": ContextBudget(max_files=10, max_chars=24000),
-    "performance_reviewer": ContextBudget(max_files=10, max_chars=24000),
-    "style_reviewer": ContextBudget(max_files=10, max_chars=24000),
+    "security_reviewer": ContextBudget(max_files=500, max_chars=2000000),
+    "performance_reviewer": ContextBudget(max_files=500, max_chars=2000000),
+    "style_reviewer": ContextBudget(max_files=500, max_chars=2000000),
 }
-DEFAULT_CONTEXT_BUDGET = ContextBudget(max_files=10, max_chars=24000)
+DEFAULT_CONTEXT_BUDGET = ContextBudget(max_files=500, max_chars=2000000)
 REVIEW_DIFF_BATCH_CHARS = 12000
 
 
@@ -71,7 +71,7 @@ def build_stable_context_pack(
 ) -> dict[str, str]:
     """构造同一 Reviewer 所有 ReviewUnit 共享的稳定上下文包。
 
-    共享包只保留固定顺序的文件前缀，且单文件共享上下文不超过 Reviewer 预算的一半。
+    共享包只保留固定顺序的文件前缀，并使用 Reviewer 的完整上下文预算。
     已进入共享包的文件不需要在每个 ReviewUnit 的动态后缀中重复发送；未进入
     共享包的关联文件仍由 ``select_reviewer_unit_context`` 提供。
     """
@@ -101,7 +101,7 @@ def build_stable_context_pack(
     ]
 
     budget = _reviewer_context_budget(reviewer_name)
-    max_chars = max(1, budget.max_chars // 2)
+    max_chars = max(1, budget.max_chars)
     selected: dict[str, str] = {}
     total_chars = 0
     for path in ordered_paths[:budget.max_files]:

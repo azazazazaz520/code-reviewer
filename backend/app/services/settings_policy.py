@@ -47,9 +47,9 @@ class ReviewSettingsPatch(BaseModel):
     max_incremental_reflection_rounds: int | None = Field(default=None, ge=0, le=10)
     context_files_per_round: int | None = Field(default=None, ge=1, le=200)
     crg_enabled: bool | None = None
-    review_unit_max_chars: int | None = Field(default=None, ge=8_000, le=100_000)
-    review_context_max_files: int | None = Field(default=None, ge=1, le=50)
-    review_context_max_chars: int | None = Field(default=None, ge=8_000, le=100_000)
+    review_unit_max_chars: int | None = Field(default=None, ge=8_000, le=500_000)
+    review_context_max_files: int | None = Field(default=None, ge=1, le=500)
+    review_context_max_chars: int | None = Field(default=None, ge=8_000, le=2_000_000)
     review_context_padding_lines: int | None = Field(default=None, ge=0, le=500)
     max_review_calls: int | None = Field(default=None, ge=1, le=500)
     max_review_duration_seconds: int | None = Field(default=None, ge=60, le=7_200)

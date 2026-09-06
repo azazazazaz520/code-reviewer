@@ -56,10 +56,19 @@ def derive_review_status(workflow_errors: list, quality: dict) -> str:
     return "complete"
 
 
-def build_summary(total: int, high_count: int) -> str:
+def build_summary(
+    total: int,
+    high_count: int,
+    *,
+    review_status: str = "complete",
+) -> str:
+    if review_status == "degraded" and total == 0:
+        return "审查未完整完成，当前未确认问题"
     summary = f"本次审查发现 {total} 个问题"
     if high_count > 0:
         summary += f"（{high_count} 个高危）"
+    if review_status == "degraded":
+        summary += "；审查未完整完成，当前结果可能不完整"
     return summary
 
 
@@ -80,7 +89,11 @@ def build_report(state: ReviewState) -> dict:
     ])
 
     return {
-        "summary": build_summary(total, high_count),
+        "summary": build_summary(
+            total,
+            high_count,
+            review_status=review_status,
+        ),
         "risk_level": risk_level,
         "review_status": review_status,
         "findings": findings,

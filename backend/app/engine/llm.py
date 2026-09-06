@@ -61,7 +61,8 @@ class LLMProvider:
         """单次 LLM 调用，返回完整响应。
 
         Returns:
-            {"content": str | None, "tool_calls": list | None, "usage": dict}
+            {"content": str | None, "reasoning_content": str | None,
+             "tool_calls": list | None, "usage": dict}
         """
         kwargs = dict(
             model=self.model,
@@ -90,11 +91,13 @@ class LLMProvider:
 
         return {
             "content": message.content,
+            "reasoning_content": getattr(message, "reasoning_content", None),
             "tool_calls": [
                 {
                     "id": tc.id,
                     "name": tc.function.name,
                     "arguments": json.loads(tc.function.arguments),
+                    "arguments_raw": tc.function.arguments,
                 }
                 for tc in (message.tool_calls or [])
             ],
@@ -162,6 +165,7 @@ class LLMProvider:
         notify(final)
         content = final.get("content")
         if isinstance(content, str) and content.strip():
+            messages.append(self._assistant_message(final))
             return content
 
         messages.append(
@@ -188,7 +192,53 @@ class LLMProvider:
                 self._response_metadata(retry, stage="finalize_retry")
             )
         retry_content = retry.get("content")
+        messages.append(self._assistant_message(retry))
         return retry_content if isinstance(retry_content, str) else ""
+
+    def _uses_deepseek(self) -> bool:
+        """判断当前 Provider 是否需要 DeepSeek 的历史字段兼容处理。"""
+        return "deepseek" in (
+            f"{getattr(self, 'base_url', '')} {getattr(self, 'model', '')}"
+        ).lower()
+
+    def _assistant_message(
+        self,
+        result: dict,
+        *,
+        include_tool_calls: bool = False,
+    ) -> dict:
+        """将 Provider 响应还原成可追加到后续请求的完整 assistant 消息。"""
+        content = result.get("content")
+        message = {
+            "role": "assistant",
+            # DeepSeek 思考模式的 tool-call assistant 消息要求 content 为字符串。
+            "content": content if isinstance(content, str) or not include_tool_calls else "",
+        }
+        reasoning_content = result.get("reasoning_content")
+        if isinstance(reasoning_content, str):
+            message["reasoning_content"] = reasoning_content
+        elif self._uses_deepseek():
+            # DeepSeek 要求携带 tools 的后续请求回传该字段；空推理也要保留字段。
+            message["reasoning_content"] = ""
+
+        if include_tool_calls:
+            message["tool_calls"] = [
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {
+                        "name": tc["name"],
+                        # 保留模型生成的原始 JSON，避免重放时改变序列化形状。
+                        "arguments": (
+                            tc["arguments_raw"]
+                            if isinstance(tc.get("arguments_raw"), str)
+                            else json.dumps(tc["arguments"], ensure_ascii=False)
+                        ),
+                    },
+                }
+                for tc in result.get("tool_calls") or []
+            ]
+        return message
 
     def chat_with_tools(
         self,
@@ -247,31 +297,18 @@ class LLMProvider:
             if content and not tool_calls:
                 # 工具调用结束后的第一段 content 可能是分析过程，不能直接
                 # 作为最终审查结果返回；统一走结构化 JSON 收口请求。
-                msgs.append({"role": "assistant", "content": content})
+                msgs.append(self._assistant_message(result))
                 notify_tool_stats()
-                return self._finalize_json(
+                output = self._finalize_json(
                     msgs,
                     response_meta_hook,
                     timeout_seconds,
                     cancel_check,
                 )
+                return output
 
             if tool_calls:
-                msgs.append({
-                    "role": "assistant",
-                    "content": content,
-                    "tool_calls": [
-                        {
-                            "id": tc["id"],
-                            "type": "function",
-                            "function": {
-                                "name": tc["name"],
-                                "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
-                            },
-                        }
-                        for tc in tool_calls
-                    ],
-                })
+                msgs.append(self._assistant_message(result, include_tool_calls=True))
 
                 for tc in tool_calls:
                     if cancel_check and cancel_check():
@@ -366,6 +403,7 @@ class LLMProvider:
             )
         content = final.get("content")
         if isinstance(content, str) and content.strip():
+            msgs.append(self._assistant_message(final))
             return content
 
         # 某些模型在工具调用达到上限后会返回空 content。再发一次短请求，
@@ -396,6 +434,7 @@ class LLMProvider:
                 self._response_metadata(retry, stage="finalize_retry")
             )
         retry_content = retry.get("content")
+        msgs.append(self._assistant_message(retry))
         return retry_content if isinstance(retry_content, str) else ""
 
 

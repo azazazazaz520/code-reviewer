@@ -39,11 +39,14 @@ class ReviewQualityTests(unittest.TestCase):
         )
 
     def test_reviewer_input_truncation_is_explicit_and_counted(self):
-        selection = select_reviewer_context_with_metadata(
-            {f"src/{index}.py": "x" * 10 for index in range(12)},
-            [],
-            "style_reviewer",
-        )
+        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
+            settings, "review_context_max_chars", 100
+        ):
+            selection = select_reviewer_context_with_metadata(
+                {f"src/{index}.py": "x" * 10 for index in range(12)},
+                [],
+                "style_reviewer",
+            )
         self.assertEqual(len(selection.files), 10)
         self.assertGreater(selection.truncated_inputs, 0)
 
@@ -92,7 +95,7 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(
             len(result["src/app.py"]),
-            settings.review_context_max_chars // 2,
+            settings.review_context_max_chars,
         )
         self.assertIn("共享上下文截断", result["src/app.py"])
 
@@ -182,6 +185,13 @@ class ReviewQualityTests(unittest.TestCase):
         )
         self.assertTrue(
             context.input_coverage["llm_usage_events"][0]["first_provider_request"]
+        )
+        self.assertEqual(
+            context.input_coverage["llm_usage_events"][0]["session_scope"],
+            "review_unit",
+        )
+        self.assertTrue(
+            context.input_coverage["llm_usage_events"][0]["session_rebuilt"]
         )
         self.assertFalse(
             context.input_coverage["llm_usage_events"][1]["first_provider_request"]
@@ -1059,7 +1069,7 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(report_state["findings"], [])
         self.assertTrue(report_state["report"])
         self.assertEqual(report_state["report"]["review_status"], "degraded")
-        self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
+        self.assertEqual(report_state["report"]["summary"], "审查未完整完成，当前未确认问题")
 
     def test_context_findings_do_not_make_report_degraded(self):
         state = {
@@ -1159,12 +1169,18 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(result, '{"findings":[]}')
         self.assertEqual(calls[1]["kwargs"]["response_format"], {"type": "json_object"})
-        self.assertIn("分析过程很长", calls[1]["messages"][-2]["content"])
+        self.assertTrue(
+            any(
+                "分析过程很长" in message.get("content", "")
+                for message in calls[1]["messages"]
+                if message.get("role") == "assistant"
+            )
+        )
 
     def test_llm_provider_exposes_deepseek_prompt_cache_usage(self):
         provider = object.__new__(LLMProvider)
-        provider.model = "deepseek-chat"
-        provider.base_url = "https://api.deepseek.com/v1"
+        provider.model = "deepseek-v4-flash"
+        provider.base_url = "https://api.deepseek.com"
         provider.temperature = 0
         provider.max_tokens = 100
         response = SimpleNamespace(
@@ -1190,6 +1206,144 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(result["usage"]["prompt_tokens"], 220)
         self.assertEqual(result["usage"]["prompt_cache_hit_tokens"], 160)
         self.assertEqual(result["usage"]["prompt_cache_miss_tokens"], 60)
+
+    def test_llm_provider_preserves_reasoning_and_raw_tool_arguments(self):
+        provider = object.__new__(LLMProvider)
+        provider.model = "deepseek-v4-flash"
+        provider.base_url = "https://api.deepseek.com"
+        provider.temperature = 0
+        provider.max_tokens = 100
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        reasoning_content="先检查变更文件。",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name="ReadFile",
+                                    arguments='{"file_path":"src/app.py", "max_lines":10}',
+                                ),
+                            )
+                        ],
+                    ),
+                    finish_reason="tool_calls",
+                )
+            ],
+            usage=SimpleNamespace(),
+        )
+        provider.client = mock.Mock()
+        provider.client.chat.completions.create.return_value = response
+
+        result = provider.chat([{"role": "user", "content": "review"}])
+
+        self.assertEqual(result["reasoning_content"], "先检查变更文件。")
+        self.assertEqual(
+            result["tool_calls"][0]["arguments_raw"],
+            '{"file_path":"src/app.py", "max_lines":10}',
+        )
+
+    def test_tool_session_replays_complete_deepseek_assistant_message(self):
+        provider = object.__new__(LLMProvider)
+        provider.model = "deepseek-v4-flash"
+        provider.base_url = "https://api.deepseek.com"
+        calls = []
+        responses = iter(
+            [
+                {
+                    "content": "",
+                    "reasoning_content": "先读取目标文件。",
+                    "tool_calls": [
+                        {
+                            "id": "call-1",
+                            "name": "ReadFile",
+                            "arguments": {"file_path": "src/app.py"},
+                            "arguments_raw": '{"file_path":"src/app.py"}',
+                        }
+                    ],
+                },
+                {
+                    "content": '{"findings":[]}',
+                    "reasoning_content": "已完成审查。",
+                    "tool_calls": [],
+                },
+            ]
+        )
+
+        def fake_chat(messages, **kwargs):
+            calls.append(messages)
+            return next(responses)
+
+        provider.chat = fake_chat
+        result = provider.chat_with_tools(
+            [{"role": "user", "content": "review"}],
+            tools=[],
+            tool_handlers={"ReadFile": lambda **_: "file content"},
+            max_rounds=1,
+        )
+
+        self.assertEqual(result, '{"findings":[]}')
+        replayed = calls[1][1]
+        self.assertEqual(replayed["role"], "assistant")
+        self.assertEqual(replayed["content"], "")
+        self.assertEqual(replayed["reasoning_content"], "先读取目标文件。")
+        self.assertEqual(
+            replayed["tool_calls"][0]["function"]["arguments"],
+            '{"file_path":"src/app.py"}',
+        )
+
+    def test_reviewer_session_rebuilds_without_previous_unit_history(self):
+        reviewer = StyleReviewer()
+        history = [
+            {"role": "system", "content": "stale system"},
+            {"role": "user", "content": "stale context + previous unit"},
+            {"role": "assistant", "content": "stale model output"},
+        ]
+        context = ReviewerContext(
+            diff="new diff",
+            llm_history=history,
+        )
+
+        messages = reviewer._build_messages(context)
+
+        self.assertEqual(len(messages), 2)
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertNotEqual(messages[0], history[0])
+        self.assertEqual(messages[1]["role"], "user")
+        self.assertIn("new diff", messages[1]["content"])
+        self.assertNotIn("stale model output", json.dumps(messages, ensure_ascii=False))
+
+    def test_stable_context_pack_can_include_complete_review_context(self):
+        file_context = {
+            f"src/{index}.py": "x" * 100
+            for index in range(20)
+        }
+
+        with mock.patch.object(settings, "review_context_max_files", 100), mock.patch.object(
+            settings, "review_context_max_chars", 10_000
+        ):
+            result = build_stable_context_pack(
+                file_context,
+                list(file_context),
+                "style_reviewer",
+            )
+
+        self.assertEqual(len(result), len(file_context))
+        self.assertEqual(sum(map(len, result.values())), 2_000)
+
+    def test_reviewer_does_not_repeat_file_context_already_in_stable_pack(self):
+        reviewer = StyleReviewer()
+        context = ReviewerContext(
+            diff="new diff",
+            file_context={"src/app.py": "value = 1\n"},
+            shared_file_context={"src/app.py": "value = 1\n"},
+        )
+
+        messages = reviewer._build_messages(context)
+
+        self.assertNotIn("## 当前文件上下文", messages[1]["content"])
 
     def test_tool_call_review_recovers_from_empty_forced_final_response(self):
         provider = object.__new__(LLMProvider)
@@ -1253,7 +1407,13 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(result, '{"findings":[]}')
         self.assertEqual(len(loaded), 1)
-        self.assertIn("Tool 调用预算已用尽", calls[-1][0][-1]["content"])
+        self.assertTrue(
+            any(
+                "Tool 调用预算已用尽" in message.get("content", "")
+                for message in calls[-1][0]
+                if message.get("role") == "user"
+            )
+        )
 
     def test_reviewer_repairs_non_json_model_output_before_failing(self):
         class RepairingLLM:

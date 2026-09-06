@@ -12,7 +12,6 @@ from app.engine.scope import classify_file
 
 
 HUNK_HEADER = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @")
-LEGACY_DIFF_BATCH_CHARS = 12000
 NUMBERED_SOURCE_LINE = re.compile(r"^(\d+)\|(.*)$")
 SYMBOL_DECLARATION = re.compile(
     r"^(?P<indent>\s*)(?:(?:export|public|private|protected|static|async)\s+)*"
@@ -166,10 +165,9 @@ def build_review_units(
                 fallback_files.append(normalised)
         if not fallback_files:
             fallback_files = ["(unknown)"]
-        legacy_budget = max(
-            1,
-            min(settings.review_unit_max_chars, LEGACY_DIFF_BATCH_CHARS),
-        )
+        # 无结构 Diff 也沿用 V4 Flash 的单元预算，避免旧的 12K 兼容上限
+        # 在无法解析 Hunk 时提前丢弃审查输入。
+        legacy_budget = max(1, settings.review_unit_max_chars)
         chunks = [diff[i:i + legacy_budget]
                   for i in range(0, len(diff), legacy_budget)]
         chunks = chunks or [""]

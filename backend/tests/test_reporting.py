@@ -109,6 +109,12 @@ class BuildSummaryTests(unittest.TestCase):
         self.assertEqual(build_summary(3, 1), "本次审查发现 3 个问题（1 个高危）")
         self.assertEqual(build_summary(3, 0), "本次审查发现 3 个问题")
 
+    def test_degraded_empty_summary_exposes_incomplete_review(self):
+        self.assertEqual(
+            build_summary(0, 0, review_status="degraded"),
+            "审查未完整完成，当前未确认问题",
+        )
+
 
 class BuildReportTests(unittest.TestCase):
     def _sample_state(self):
