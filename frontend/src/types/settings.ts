@@ -11,8 +11,19 @@ export interface LLMSettings {
 
 export interface ReviewSettings {
   max_reflection_rounds: number;
+  max_incremental_reflection_rounds: number;
   context_files_per_round: number;
   crg_enabled: boolean;
+  review_unit_max_chars: number;
+  review_context_max_files: number;
+  review_context_max_chars: number;
+  review_context_padding_lines: number;
+  max_review_calls: number;
+  max_review_duration_seconds: number;
+  max_tool_rounds: number;
+  max_tool_calls_per_unit: number;
+  max_related_files_per_unit: number;
+  review_parallelism: number;
 }
 
 export interface PromptSettings {
@@ -59,8 +70,19 @@ export interface LLMSettingsPatch {
 
 export interface ReviewSettingsPatch {
   max_reflection_rounds?: number;
+  max_incremental_reflection_rounds?: number;
   context_files_per_round?: number;
   crg_enabled?: boolean;
+  review_unit_max_chars?: number;
+  review_context_max_files?: number;
+  review_context_max_chars?: number;
+  review_context_padding_lines?: number;
+  max_review_calls?: number;
+  max_review_duration_seconds?: number;
+  max_tool_rounds?: number;
+  max_tool_calls_per_unit?: number;
+  max_related_files_per_unit?: number;
+  review_parallelism?: number;
 }
 
 export interface PromptSettingsPatch {

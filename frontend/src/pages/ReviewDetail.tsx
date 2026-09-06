@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useParams, useNavigate } from "react-router-dom";
-import { Archive, ArchiveRestore, ChevronLeft, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, CircleAlert, ChevronLeft, Trash2 } from "lucide-react";
 import type { Finding, ReviewLog, ReviewReport, ReviewTask } from "../types";
 import { reviewApi } from "../api/reviews";
 import { Badge } from "../components/ui/badge";
@@ -118,7 +118,8 @@ export default function ReviewDetail() {
       terminalStatus !== undefined &&
       terminalStatus !== "pending" &&
       terminalStatus !== "preparing" &&
-      terminalStatus !== "running";
+      terminalStatus !== "running" &&
+      terminalStatus !== "cancelling";
 
     if (isTerminal) {
       setPolling(false);
@@ -211,6 +212,25 @@ export default function ReviewDetail() {
     }
   };
 
+  const cancelReview = async () => {
+    if (!task || !["pending", "preparing", "running"].includes(task.status)) return;
+    setActionPending(true);
+    setActionError(null);
+    try {
+      const response = await reviewApi.cancel(task.id);
+      taskRef.current = response.data;
+      setTask(response.data);
+      if (response.data.status === "cancelled") {
+        setPolling(false);
+        setLogPolling(false);
+      }
+    } catch (error) {
+      setActionError(toUserError(error, "停止审查失败，请稍后重试"));
+    } finally {
+      setActionPending(false);
+    }
+  };
+
   if (loading) {
     return page(
       <>
@@ -224,7 +244,15 @@ export default function ReviewDetail() {
 
   // ── Still polling, no report yet ──
   if (!report && polling) {
-    return page(<ReviewProgress logs={logs} logPolling={logPolling} />);
+    return page(
+      <ReviewProgress
+        logs={logs}
+        logPolling={logPolling}
+        taskStatus={task?.status}
+        onCancel={() => void cancelReview()}
+        cancelPending={actionPending}
+      />,
+    );
   }
 
   // ── Failed state ──
@@ -242,6 +270,21 @@ export default function ReviewDetail() {
         />
       </>,
       "failed",
+    );
+  }
+
+  if (!report && !polling && task?.status === "cancelled") {
+    return page(
+      <>
+        <Button variant="ghost" onClick={() => navigate(-1)}>
+          <ChevronLeft className="h-4 w-4 mr-1" />
+          返回
+        </Button>
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-6 text-center text-sm text-amber-950 dark:text-amber-100">
+          审查任务已取消，尚未生成报告。
+        </div>
+      </>,
+      "cancelled",
     );
   }
 
@@ -315,6 +358,15 @@ export default function ReviewDetail() {
   const diagnosticCount =
     diagnosticChecks.length + contextFindingCount + filteredFindingCount;
   const reviewerOutputs = Object.entries(report.reviewer_outputs ?? {});
+  const executionQuality = report.quality;
+  const pendingUnitIds = executionQuality?.pending_unit_ids ?? [];
+  const uncoveredFiles = executionQuality?.uncovered_files ?? [];
+  const uncoveredHunks = executionQuality?.uncovered_hunks ?? [];
+  const hasExecutionMetrics = [
+    executionQuality?.planned_units,
+    executionQuality?.primary_llm_calls,
+    executionQuality?.elapsed_seconds,
+  ].some((value) => value !== undefined);
 
   const allFindings = report.findings;
   const filteredFindings = filterSeverity
@@ -339,9 +391,9 @@ export default function ReviewDetail() {
             {task.archived_at ? (
               <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending} onClick={() => void manageReview("restore")}><ArchiveRestore className="mr-1 h-4 w-4" />恢复记录</Button>
             ) : (
-              <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
+              <Button variant="outline" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running" || task.status === "cancelling"} onClick={() => void manageReview("archive")}><Archive className="mr-1 h-4 w-4" />归档记录</Button>
             )}
-            <Button variant="destructive" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
+            <Button variant="destructive" size="sm" className="min-h-11 sm:min-h-0" disabled={actionPending || task.status === "pending" || task.status === "preparing" || task.status === "running" || task.status === "cancelling"} onClick={() => void manageReview("delete")}><Trash2 className="mr-1 h-4 w-4" />永久删除</Button>
           </div>
         )}
       </div>
@@ -349,7 +401,7 @@ export default function ReviewDetail() {
 
       {/* Progress log (if not polling) */}
       {report && logs.length > 0 && !polling && (
-        <ReviewProgress logs={logs} logPolling={false} />
+        <ReviewProgress logs={logs} logPolling={false} taskStatus={task?.status} />
       )}
 
       {/* Risk level header */}
@@ -363,6 +415,21 @@ export default function ReviewDetail() {
         <p className="mt-2 text-sm leading-6">{report.summary}</p>
       </div>
 
+      {report.review_status === "degraded" && (
+        <div
+          role="alert"
+          className="flex items-start gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-amber-950 dark:text-amber-100"
+        >
+          <CircleAlert className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <div>
+            <h2 className="font-semibold">审查结果需要复核</h2>
+            <p className="mt-1 text-sm leading-6">
+              本次审查存在未覆盖范围、工具错误或输出截断。当前 Finding 只代表已完成且通过门槛的部分，不能作为完整审查结论；请展开“审查诊断”查看具体限制。
+            </p>
+          </div>
+        </div>
+      )}
+
       {task && (
         <div className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground">
           <div className="flex flex-wrap gap-x-5 gap-y-1">
@@ -372,6 +439,35 @@ export default function ReviewDetail() {
           </div>
           {task.source_type === "workspace" && task.workspace_stats_json && (
             <div className="mt-1 text-xs">工作区快照：{task.workspace_stats_json}</div>
+          )}
+        </div>
+      )}
+
+      {hasExecutionMetrics && (
+        <div className="rounded-lg border bg-card px-4 py-3 text-sm text-muted-foreground">
+          <div className="mb-1 font-medium text-foreground">审查执行摘要</div>
+          <div className="flex flex-wrap gap-x-5 gap-y-1">
+            <span>
+              已完成审查单元：{executionQuality?.reviewed_units ?? executionQuality?.completed_units ?? 0} / {executionQuality?.planned_units ?? 0}
+            </span>
+            <span>
+              上下文 Hunk：{executionQuality?.context_covered_hunks ?? executionQuality?.covered_hunks ?? 0} / {executionQuality?.planned_hunks ?? 0}
+            </span>
+            <span>模型调用：{executionQuality?.primary_llm_calls ?? 0}</span>
+            <span>
+              Tool 请求：{executionQuality?.tool_requests ?? executionQuality?.tool_calls ?? 0}
+            </span>
+            <span>
+              文件缓存命中：{executionQuality?.read_file_cache_hits ?? executionQuality?.cache_hits ?? 0}
+            </span>
+            {executionQuality?.elapsed_seconds !== undefined && (
+              <span>耗时：{executionQuality.elapsed_seconds.toFixed(1)} 秒</span>
+            )}
+          </div>
+          {(executionQuality?.pending_units || executionQuality?.pending_reviewer_assignments || executionQuality?.pending_assignments) && (
+            <div className="mt-1 text-xs">
+              待处理：{executionQuality?.pending_units ?? 0} 个审查单元，{executionQuality?.pending_reviewer_assignments ?? executionQuality?.pending_assignments ?? 0} 个 Reviewer 分配
+            </div>
           )}
         </div>
       )}
@@ -421,6 +517,24 @@ export default function ReviewDetail() {
                 </div>
               </div>
             ))}
+            {pendingUnitIds.length > 0 && (
+              <p className="text-muted-foreground">
+                未处理审查单元：{pendingUnitIds.slice(0, 8).map((unitId) => unitId.slice(0, 12)).join("、")}
+                {pendingUnitIds.length > 8 ? ` 等 ${pendingUnitIds.length} 个` : ""}
+              </p>
+            )}
+            {uncoveredFiles.length > 0 && (
+              <p className="text-muted-foreground">
+                未完成上下文文件：{uncoveredFiles.slice(0, 8).join("、")}
+                {uncoveredFiles.length > 8 ? ` 等 ${uncoveredFiles.length} 个` : ""}
+              </p>
+            )}
+            {uncoveredHunks.length > 0 && (
+              <p className="text-muted-foreground">
+                未完成 Diff Hunk：{uncoveredHunks.slice(0, 8).join("、")}
+                {uncoveredHunks.length > 8 ? ` 等 ${uncoveredHunks.length} 个` : ""}
+              </p>
+            )}
           </div>
         </details>
       )}

@@ -29,10 +29,12 @@ class SecurityReviewer(BaseReviewer):
 严格返回 JSON 数组，每个发现包含以下字段：
 - severity: "critical" | "high" | "medium" | "low"
 - file: 文件路径
-- line: 行号（整数，如果不确定填 0）
+- line: 具体行号（整数；无法定位到具体行时不要返回 Finding）
 - title: 简短标题
 - reason: 为什么这是问题
 - suggestion: 如何修复
+- evidence: 直接支持漏洞判断的代码片段、参数流或工具结果；不能只写文件路径和行号
+- impact: "behavior" | "security" | "compatibility" | "build" | "maintainability"
 
 如果没有发现任何安全问题，返回空数组 []。
 
@@ -45,7 +47,8 @@ class SecurityReviewer(BaseReviewer):
     "line": 42,
     "title": "SQL 注入：用户输入直接拼接到查询",
     "reason": "username 参数未经过滤直接拼接到 SQL 语句中",
-    "suggestion": "使用参数化查询或 ORM 提供的安全方法"
+    "suggestion": "使用参数化查询或 ORM 提供的安全方法",
+    "impact": "security"
   }
 ]
 ```

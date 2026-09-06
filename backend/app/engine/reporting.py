@@ -31,8 +31,27 @@ def derive_risk(severity_count: dict[str, int]) -> str:
 
 
 def derive_review_status(workflow_errors: list, quality: dict) -> str:
-    """审查状态：存在错误或 LLM 输出被截断时标记 degraded。"""
+    """审查状态：未完成数据库、输入覆盖或输出验证时标记 degraded。"""
     if workflow_errors or quality.get("truncated_outputs", 0) > 0:
+        return "degraded"
+    if quality.get("truncated_inputs", 0) > 0:
+        return "degraded"
+    if quality.get("tool_errors", 0) > 0 or quality.get("tool_budget_exhausted"):
+        return "degraded"
+    if quality.get("budget_exhausted") or quality.get("cancel_requested"):
+        return "degraded"
+    if quality.get(
+        "pending_reviewer_assignments",
+        quality.get("pending_assignments", 0),
+    ) > 0:
+        return "degraded"
+    if quality.get("uncovered_files") or quality.get("uncovered_hunks"):
+        return "degraded"
+    if quality.get("coverage_status") not in {None, "complete"}:
+        return "degraded"
+    if quality.get("database_status") not in {None, "ready"}:
+        return "degraded"
+    if quality.get("extraction_status") not in {None, "complete"}:
         return "degraded"
     return "complete"
 
@@ -68,6 +87,7 @@ def build_report(state: ReviewState) -> dict:
         "checks": state.get("checks", []),
         "quality": quality,
         "reviewer_outputs": state.get("reviewer_outputs", {}),
+        "code_database": state.get("code_database_info", {}),
         "changes": {
             "review_type": state.get("review_type", ""),
             "source_type": state.get("source_type"),

@@ -2,7 +2,7 @@
 
 import unittest
 
-from app.engine.quality import build_quality_checks, compute_quality_metrics
+from app.engine.quality import build_quality_checks, compute_quality_metrics, merge_checks
 
 
 class ComputeQualityMetricsTests(unittest.TestCase):
@@ -77,6 +77,33 @@ class BuildQualityChecksTests(unittest.TestCase):
             build_quality_checks({"filtered_findings": 0, "reviewer_context_findings": 0}),
             [],
         )
+
+    def test_merge_checks_replaces_duplicate_named_checks(self):
+        merged = merge_checks(
+            [
+                {"name": "review_coverage", "status": "warning", "message": "旧状态"},
+                {"name": "validator", "status": "ok", "message": "保留"},
+                {"name": "review_coverage", "status": "warning", "message": "重复旧状态"},
+            ],
+            [
+                {"name": "review_coverage", "status": "warning", "message": "新状态"},
+                {"name": "review_coverage", "status": "warning", "message": "最新状态"},
+            ],
+        )
+
+        self.assertEqual(
+            [check["name"] for check in merged],
+            ["validator", "review_coverage"],
+        )
+        self.assertEqual(merged[-1]["message"], "最新状态")
+
+    def test_merge_checks_removes_resolved_quality_warning(self):
+        merged = merge_checks(
+            [{"name": "review_coverage", "status": "warning", "message": "待读取"}],
+            [],
+        )
+
+        self.assertEqual(merged, [])
 
 
 if __name__ == "__main__":

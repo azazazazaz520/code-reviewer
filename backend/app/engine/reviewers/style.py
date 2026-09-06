@@ -35,6 +35,8 @@ class StyleReviewer(BaseReviewer):
 - title: 简短标题
 - reason: 为什么这是问题
 - suggestion: 如何改进
+- evidence: 直接支持结论的代码片段或具体值；不能只写文件路径和行号
+- impact: "behavior" | "security" | "compatibility" | "build" | "maintainability"
 
 如果没有发现任何问题，返回空数组 []。
 """

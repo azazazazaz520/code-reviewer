@@ -88,6 +88,8 @@ class LLMProvider:
         self,
         messages: list[dict],
         response_meta_hook: Callable[[dict], None] | None = None,
+        timeout_seconds: float | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> str:
         messages.append(
             {
@@ -111,7 +113,15 @@ class LLMProvider:
                     }
                 )
 
-        final = self.chat(messages, response_format=json_format)
+        if cancel_check and cancel_check():
+            from app.engine.execution import ReviewCancelled
+
+            raise ReviewCancelled("审查任务已取消")
+        final = self.chat(
+            messages,
+            response_format=json_format,
+            timeout_seconds=timeout_seconds,
+        )
         notify(final)
         content = final.get("content")
         if isinstance(content, str) and content.strip():
@@ -127,7 +137,15 @@ class LLMProvider:
                 ),
             }
         )
-        retry = self.chat(messages, response_format=json_format)
+        if cancel_check and cancel_check():
+            from app.engine.execution import ReviewCancelled
+
+            raise ReviewCancelled("审查任务已取消")
+        retry = self.chat(
+            messages,
+            response_format=json_format,
+            timeout_seconds=timeout_seconds,
+        )
         notify(retry)
         retry_content = retry.get("content")
         return retry_content if isinstance(retry_content, str) else ""
@@ -138,6 +156,9 @@ class LLMProvider:
         tools: list[dict],
         tool_handlers: dict[str, callable],
         max_rounds: int = 3,
+        max_tool_calls: int = 0,
+        timeout_seconds: float | None = None,
+        cancel_check: Callable[[], bool] | None = None,
         log_hook: Callable | None = None,
         response_meta_hook: Callable[[dict], None] | None = None,
     ) -> str:
@@ -147,9 +168,27 @@ class LLMProvider:
         直到 LLM 返回纯文本或达到 max_rounds。
         """
         msgs = list(messages)
+        tool_call_count = 0
+        tool_round_count = 0
+        tool_budget_exhausted = False
+
+        def notify_tool_stats() -> None:
+            if response_meta_hook:
+                response_meta_hook(
+                    {
+                        "tool_calls": tool_call_count,
+                        "tool_rounds": tool_round_count,
+                        "tool_budget_exhausted": tool_budget_exhausted,
+                    }
+                )
 
         for _ in range(max_rounds):
-            result = self.chat(msgs, tools=tools)
+            tool_round_count += 1
+            if cancel_check and cancel_check():
+                from app.engine.execution import ReviewCancelled
+
+                raise ReviewCancelled("审查任务已取消")
+            result = self.chat(msgs, tools=tools, timeout_seconds=timeout_seconds)
             if response_meta_hook:
                 response_meta_hook(
                     {
@@ -159,16 +198,24 @@ class LLMProvider:
                     }
                 )
 
-            if result["content"] and not result["tool_calls"]:
+            content = result.get("content")
+            tool_calls = result.get("tool_calls") or []
+            if content and not tool_calls:
                 # 工具调用结束后的第一段 content 可能是分析过程，不能直接
                 # 作为最终审查结果返回；统一走结构化 JSON 收口请求。
-                msgs.append({"role": "assistant", "content": result["content"]})
-                return self._finalize_json(msgs, response_meta_hook)
+                msgs.append({"role": "assistant", "content": content})
+                notify_tool_stats()
+                return self._finalize_json(
+                    msgs,
+                    response_meta_hook,
+                    timeout_seconds,
+                    cancel_check,
+                )
 
-            if result["tool_calls"]:
+            if tool_calls:
                 msgs.append({
                     "role": "assistant",
-                    "content": result["content"],
+                    "content": content,
                     "tool_calls": [
                         {
                             "id": tc["id"],
@@ -178,13 +225,29 @@ class LLMProvider:
                                 "arguments": json.dumps(tc["arguments"], ensure_ascii=False),
                             },
                         }
-                        for tc in result["tool_calls"]
+                        for tc in tool_calls
                     ],
                 })
 
-                for tc in result["tool_calls"]:
-                    handler = tool_handlers.get(tc["name"])
-                    tool_result = handler(**tc["arguments"]) if handler else json.dumps({"error": f"unknown tool: {tc['name']}"})
+                for tc in tool_calls:
+                    if cancel_check and cancel_check():
+                        from app.engine.execution import ReviewCancelled
+
+                        raise ReviewCancelled("审查任务已取消")
+                    if max_tool_calls > 0 and tool_call_count >= max_tool_calls:
+                        tool_budget_exhausted = True
+                        tool_result = f"Error: Tool 调用预算已用尽（上限 {max_tool_calls} 次）"
+                    else:
+                        tool_call_count += 1
+                        handler = tool_handlers.get(tc["name"])
+                        try:
+                            tool_result = (
+                                handler(**tc["arguments"])
+                                if handler
+                                else json.dumps({"error": f"unknown tool: {tc['name']}"})
+                            )
+                        except Exception as exc:
+                            tool_result = f"Error: {type(exc).__name__}: {exc}"
 
                     # 日志插桩
                     if log_hook:
@@ -218,6 +281,8 @@ class LLMProvider:
                         "content": tool_result if isinstance(tool_result, str) else json.dumps(tool_result, ensure_ascii=False),
                     })
 
+                notify_tool_stats()
+
         # 超过 max_rounds，强制要求 LLM 输出最终结果。
         # 这里必须重复机器可解析的输出契约，否则模型容易返回 Markdown 说明，
         # 让 Reviewer 看起来像“没有问题”，实际却没有完成审查。
@@ -231,7 +296,26 @@ class LLMProvider:
         }
         msgs.append(final_prompt)
         json_format = {"type": "json_object"}
-        final = self.chat(msgs, response_format=json_format)
+        if cancel_check and cancel_check():
+            from app.engine.execution import ReviewCancelled
+
+            raise ReviewCancelled("审查任务已取消")
+        if tool_budget_exhausted:
+            msgs.append(
+                {
+                    "role": "user",
+                    "content": (
+                        "Tool 调用预算已用尽。请只根据已经获得的代码和工具结果完成审查，"
+                        "不要再次调用 Tool。只返回 JSON 对象，根节点必须包含 findings 数组。"
+                    ),
+                }
+            )
+        notify_tool_stats()
+        final = self.chat(
+            msgs,
+            response_format=json_format,
+            timeout_seconds=timeout_seconds,
+        )
         if response_meta_hook:
             response_meta_hook(
                 {
@@ -257,7 +341,16 @@ class LLMProvider:
                 ),
             }
         )
-        retry = self.chat(msgs, response_format=json_format)
+        if cancel_check and cancel_check():
+            from app.engine.execution import ReviewCancelled
+
+            raise ReviewCancelled("审查任务已取消")
+        notify_tool_stats()
+        retry = self.chat(
+            msgs,
+            response_format=json_format,
+            timeout_seconds=timeout_seconds,
+        )
         if response_meta_hook:
             response_meta_hook(
                 {

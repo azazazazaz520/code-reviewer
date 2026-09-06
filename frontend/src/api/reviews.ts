@@ -10,6 +10,7 @@ export const reviewApi = {
   listPRs: (repoId: string) => api.get<PRItem[]>(`/repos/${repoId}/prs`),
   listCommits: (repoId: string, branch?: string, limit = 20) => api.get<CommitItem[]>(`/repos/${repoId}/commits`, { params: { limit, branch } }),
   logs: (taskId: string) => api.get<ReviewLog[]>(`/reviews/${taskId}/logs`),
+  cancel: (taskId: string) => api.post<ReviewTask>(`/reviews/${taskId}/cancel`),
   archive: (taskId: string) => api.post<ReviewTask>(`/reviews/${taskId}/archive`),
   restore: (taskId: string) => api.post<ReviewTask>(`/reviews/${taskId}/restore`),
   remove: (taskId: string) => api.delete(`/reviews/${taskId}`),

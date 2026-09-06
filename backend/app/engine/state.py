@@ -21,9 +21,23 @@ class ReviewState(TypedDict, total=False):
     snapshot_base_revision: str
     workspace_fingerprint: str | None
     workspace_stats: dict[str, int] | None
+    database_id: str
+    database_status: str
+    extraction_status: str
+    extraction_errors: list[dict]
+    database_stats: dict
+    code_database_info: dict
+    code_database: object
+    tool_context: object
+    approved_context_refs: list[dict]
+    analysis_results: list[dict]
+    coverage: dict
     context_candidates: list[str]
     context_round: int
     context_initialized: bool
+    context_errors: dict[str, str]
+    context_progress: dict[str, dict]
+    candidate_findings: list[dict]
     change_scopes: dict[str, str]
 
     # 确定性校验与审查质量
@@ -32,6 +46,14 @@ class ReviewState(TypedDict, total=False):
     workflow_errors: list[dict]
     quality_metrics: dict
     reviewer_outputs: dict[str, dict]
+    reviewed_batch_keys: dict[str, list[str]]
+    review_units: list[dict]
+    reviewed_unit_keys: dict[str, list[str]]
+    completed_unit_ids: list[str]
+    pending_unit_ids: list[str]
+    review_budget: dict
+    tool_cache: object
+    cancel_requested: bool
 
     # 审查计划
     review_plan: list[str]  # ["security_reviewer", "style_reviewer", ...]
@@ -58,3 +80,5 @@ class ReviewState(TypedDict, total=False):
 
     # 日志回调（审查进度实时推送）
     _log_hook: object
+    _cancel_check: object
+    _review_budget_object: object

@@ -373,8 +373,14 @@ def _git_diff(repo_path: str, diff_range: tuple[str, str, str]) -> str:
 def _git_changed_files(repo_path: str, diff_range: tuple[str, str, str]) -> list[str]:
     base, revision, separator = diff_range
     revisions = [f"{base}{separator}{revision}"] if separator else [base, revision]
-    output = _run_git(repo_path, ["diff", "--name-only", "--no-ext-diff", *revisions])
-    return [line for line in output.splitlines() if line.strip()]
+    output = _run_git(
+        repo_path,
+        ["diff", "--name-only", "-z", "--no-ext-diff", *revisions],
+    )
+    # NUL 分隔可以保留文件名中的换行；兼容旧测试替换的普通文本返回值。
+    return [item for item in output.split("\0") if item] if "\0" in output else [
+        line for line in output.splitlines() if line.strip()
+    ]
 
 
 def _run_git(repo_path: str, args: list[str], timeout: int = 60) -> str:

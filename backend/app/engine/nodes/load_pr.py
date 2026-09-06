@@ -52,8 +52,9 @@ def load_pr_node(state: ReviewState) -> ReviewState:
             files_text = get_changed_files(repo_path, base)
 
     state["raw_diff"] = diff_text
+    file_records = files_text.split("\0") if "\0" in files_text else files_text.splitlines()
     state["changed_files"] = [
-        f.strip() for f in files_text.split("\n")
+        f.strip() for f in file_records
         if f.strip() and not f.strip().startswith("Error:")
     ]
 

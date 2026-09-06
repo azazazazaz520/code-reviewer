@@ -12,6 +12,7 @@ from app.api.reviews import (
     get_review_status,
     list_reviews_with_archive,
     restore_review,
+    cancel_review,
 )
 from app.models.base import Base
 from app.models.repo import Repo, ReviewLog, ReviewReport, ReviewTask
@@ -106,6 +107,27 @@ class ReviewLifecycleTests(unittest.TestCase):
 
         self.assertEqual(response.repo_name, "test-repo")
         self.assertEqual(response.risk_level, "high")
+
+    def test_cancel_changes_pending_task_to_terminal_cancelled(self):
+        self.task.status = "pending"
+        self.session.commit()
+
+        response = cancel_review(self.task.id, self.session)
+
+        self.assertEqual(response.status, "cancelled")
+        self.session.refresh(self.task)
+        self.assertEqual(self.task.status, "cancelled")
+        self.assertIsNotNone(self.task.completed_at)
+
+    def test_cancel_marks_running_task_as_cancelling(self):
+        self.task.status = "running"
+        self.session.commit()
+
+        response = cancel_review(self.task.id, self.session)
+
+        self.assertEqual(response.status, "cancelling")
+        self.session.refresh(self.task)
+        self.assertEqual(self.task.status, "cancelling")
 
 
 if __name__ == "__main__":

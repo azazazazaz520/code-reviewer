@@ -17,8 +17,11 @@ from langgraph.graph import StateGraph, END
 
 from app.config import settings
 from app.engine.state import ReviewState
+from app.engine.execution import ReviewExecutionBudget
+from app.engine.tools.context import TaskToolCache
 from app.engine.nodes import (
     load_pr_node,
+    build_database_node,
     planning_node,
     validate_changes_node,
     collect_context_node,
@@ -37,6 +40,7 @@ def _build_graph() -> StateGraph:
     builder = StateGraph(ReviewState)
 
     builder.add_node("load_pr", load_pr_node)
+    builder.add_node("build_database", build_database_node)
     builder.add_node("planning", planning_node)
     builder.add_node("validate_changes", validate_changes_node)
     builder.add_node("collect_context", collect_context_node)
@@ -45,7 +49,8 @@ def _build_graph() -> StateGraph:
     builder.add_node("generate_report", generate_report_node)
 
     builder.set_entry_point("load_pr")
-    builder.add_edge("load_pr", "planning")
+    builder.add_edge("load_pr", "build_database")
+    builder.add_edge("build_database", "planning")
     builder.add_edge("planning", "validate_changes")
     builder.add_edge("validate_changes", "collect_context")
     builder.add_edge("collect_context", "run_reviews")
@@ -81,6 +86,7 @@ def run_workflow(
     workspace_path: str | None = None,
     workspace_target: str | None = None,
     log_hook: Callable | None = None,
+    cancel_check: Callable[[], bool] | None = None,
 ) -> dict:
     """运行审查 Workflow，返回报告 dict。"""
     snapshot = create_review_snapshot(
@@ -113,15 +119,37 @@ def run_workflow(
             "snapshot_base_revision": snapshot.base_revision,
             "workspace_fingerprint": snapshot.workspace_fingerprint,
             "workspace_stats": snapshot.workspace_stats,
+            "database_id": "",
+            "database_status": "failed",
+            "extraction_status": "failed",
+            "extraction_errors": [],
+            "database_stats": {},
+            "code_database_info": {},
+            "code_database": None,
+            "tool_context": None,
+            "approved_context_refs": [],
+            "analysis_results": [],
+            "coverage": {},
             "review_plan": [],
             "context_candidates": [],
             "context_round": 0,
             "context_initialized": False,
+            "context_errors": {},
+            "context_progress": {},
+            "candidate_findings": [],
             "validator_findings": [],
             "checks": [],
             "workflow_errors": [],
             "quality_metrics": {},
             "reviewer_outputs": {},
+            "reviewed_batch_keys": {},
+            "review_units": [],
+            "reviewed_unit_keys": {},
+            "completed_unit_ids": [],
+            "pending_unit_ids": [],
+            "review_budget": {},
+            "tool_cache": TaskToolCache(),
+            "cancel_requested": False,
             "change_scopes": {},
             "file_context_cache": {},
             "findings": [],
@@ -133,6 +161,11 @@ def run_workflow(
             "crg_enabled": settings.crg_enabled,
             "impact_radius": None,
             "_log_hook": log_hook,
+            "_cancel_check": cancel_check,
+            "_review_budget_object": ReviewExecutionBudget(
+                max_primary_calls=settings.max_review_calls,
+                max_duration_seconds=settings.max_review_duration_seconds,
+            ),
         }
 
         final_state = _graph.invoke(initial_state)
