@@ -12,6 +12,7 @@ import asyncio
 from app.config import settings
 from app.models.base import SessionLocal
 from app.models.repo import ReviewTask
+from datetime import UTC, datetime
 
 
 class ReviewTaskRunner:
@@ -55,6 +56,14 @@ def _recover_running_tasks() -> None:
             {
                 ReviewTask.status: "pending",
                 ReviewTask.error_message: None,
+            },
+            synchronize_session=False,
+        )
+        db.query(ReviewTask).filter(ReviewTask.status == "cancelling").update(
+            {
+                ReviewTask.status: "cancelled",
+                ReviewTask.error_message: "后端重启时结束了取消中的审查任务。",
+                ReviewTask.completed_at: datetime.now(UTC),
             },
             synchronize_session=False,
         )

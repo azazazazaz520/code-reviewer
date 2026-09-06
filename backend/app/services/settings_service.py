@@ -41,8 +41,19 @@ class ReviewSettingsSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     max_reflection_rounds: int
+    max_incremental_reflection_rounds: int
     context_files_per_round: int
     crg_enabled: bool
+    review_unit_max_chars: int
+    review_context_max_files: int
+    review_context_max_chars: int
+    review_context_padding_lines: int
+    max_review_calls: int
+    max_review_duration_seconds: int
+    max_tool_rounds: int
+    max_tool_calls_per_unit: int
+    max_related_files_per_unit: int
+    review_parallelism: int
 
 
 class PromptSettingsSnapshot(BaseModel):
@@ -114,8 +125,19 @@ _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "llm_max_tokens": ("LLM_MAX_TOKENS",),
     "deepseek_base_url": ("DEEPSEEK_BASE_URL",),
     "max_reflection_rounds": ("MAX_REFLECTION_ROUNDS",),
+    "max_incremental_reflection_rounds": ("MAX_INCREMENTAL_REFLECTION_ROUNDS",),
     "context_files_per_round": ("CONTEXT_FILES_PER_ROUND",),
     "crg_enabled": ("CRG_ENABLED",),
+    "review_unit_max_chars": ("REVIEW_UNIT_MAX_CHARS",),
+    "review_context_max_files": ("REVIEW_CONTEXT_MAX_FILES",),
+    "review_context_max_chars": ("REVIEW_CONTEXT_MAX_CHARS",),
+    "review_context_padding_lines": ("REVIEW_CONTEXT_PADDING_LINES",),
+    "max_review_calls": ("MAX_REVIEW_CALLS",),
+    "max_review_duration_seconds": ("MAX_REVIEW_DURATION_SECONDS",),
+    "max_tool_rounds": ("MAX_TOOL_ROUNDS",),
+    "max_tool_calls_per_unit": ("MAX_TOOL_CALLS_PER_UNIT",),
+    "max_related_files_per_unit": ("MAX_RELATED_FILES_PER_UNIT",),
+    "review_parallelism": ("REVIEW_PARALLELISM",),
     "prompt_timeout_seconds": ("PROMPT_TIMEOUT_SECONDS",),
     "prompt_min_input_chars": ("PROMPT_MIN_INPUT_CHARS",),
     "prompt_max_input_chars": ("PROMPT_MAX_INPUT_CHARS",),
@@ -132,8 +154,19 @@ _FIELD_PATHS: dict[str, str] = {
     "llm.temperature": "llm_temperature",
     "llm.max_tokens": "llm_max_tokens",
     "review.max_reflection_rounds": "max_reflection_rounds",
+    "review.max_incremental_reflection_rounds": "max_incremental_reflection_rounds",
     "review.context_files_per_round": "context_files_per_round",
     "review.crg_enabled": "crg_enabled",
+    "review.review_unit_max_chars": "review_unit_max_chars",
+    "review.review_context_max_files": "review_context_max_files",
+    "review.review_context_max_chars": "review_context_max_chars",
+    "review.review_context_padding_lines": "review_context_padding_lines",
+    "review.max_review_calls": "max_review_calls",
+    "review.max_review_duration_seconds": "max_review_duration_seconds",
+    "review.max_tool_rounds": "max_tool_rounds",
+    "review.max_tool_calls_per_unit": "max_tool_calls_per_unit",
+    "review.max_related_files_per_unit": "max_related_files_per_unit",
+    "review.review_parallelism": "review_parallelism",
     "prompt.timeout_seconds": "prompt_timeout_seconds",
     "prompt.min_input_chars": "prompt_min_input_chars",
     "prompt.max_input_chars": "prompt_max_input_chars",
@@ -293,8 +326,19 @@ class SettingsService:
                 ),
                 review=ReviewSettingsSnapshot(
                     max_reflection_rounds=settings.max_reflection_rounds,
+                    max_incremental_reflection_rounds=settings.max_incremental_reflection_rounds,
                     context_files_per_round=settings.context_files_per_round,
                     crg_enabled=settings.crg_enabled,
+                    review_unit_max_chars=settings.review_unit_max_chars,
+                    review_context_max_files=settings.review_context_max_files,
+                    review_context_max_chars=settings.review_context_max_chars,
+                    review_context_padding_lines=settings.review_context_padding_lines,
+                    max_review_calls=settings.max_review_calls,
+                    max_review_duration_seconds=settings.max_review_duration_seconds,
+                    max_tool_rounds=settings.max_tool_rounds,
+                    max_tool_calls_per_unit=settings.max_tool_calls_per_unit,
+                    max_related_files_per_unit=settings.max_related_files_per_unit,
+                    review_parallelism=settings.review_parallelism,
                 ),
                 prompt=PromptSettingsSnapshot(
                     timeout_seconds=settings.prompt_timeout_seconds,

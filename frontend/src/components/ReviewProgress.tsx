@@ -40,6 +40,9 @@ interface ReviewTimeline {
 interface ReviewProgressProps {
   logs: ReviewLog[];
   logPolling: boolean;
+  taskStatus?: string;
+  onCancel?: () => void;
+  cancelPending?: boolean;
 }
 
 function formatTime(iso: string) {
@@ -121,6 +124,9 @@ function buildReviewTimeline(
 export default function ReviewProgress({
   logs,
   logPolling,
+  taskStatus,
+  onCancel,
+  cancelPending = false,
 }: ReviewProgressProps) {
   const logContainerRef = useRef<HTMLDivElement>(null);
   const previousLogCountRef = useRef(logs.length);
@@ -173,11 +179,14 @@ export default function ReviewProgress({
 
   const isComplete =
     logs.length > 0 && logs[logs.length - 1].message === "审查完成";
-  const isFailed = !logPolling && !isComplete && logs.length > 0;
+  const isCancelled = ["cancelling", "cancelled"].includes(taskStatus ?? "");
+  const isFailed = !isCancelled && !logPolling && !isComplete && logs.length > 0;
 
   const timeline = buildReviewTimeline(logs, isComplete, isFailed);
   const timelineStatusText = timeline.status === "done"
     ? "审查完成"
+    : isCancelled
+      ? "审查已取消"
     : timeline.status === "failed"
       ? "审查失败"
       : timeline.status === "waiting"
@@ -186,12 +195,17 @@ export default function ReviewProgress({
   const currentStep = timeline.steps[timeline.activeIndex];
   const timelineDetail = timeline.status === "done"
     ? "所有阶段已完成"
+    : isCancelled
+      ? "已停止继续请求模型和工具"
     : timeline.status === "failed"
       ? `失败阶段：${currentStep?.label ?? "未知阶段"}`
       : `当前阶段：${currentStep?.label ?? "准备审查来源"}`;
 
   // 审查执行时展开日志，结束后默认折叠。
   const showLogs = logPolling || expanded;
+  const canCancel = Boolean(
+    onCancel && ["pending", "preparing", "running"].includes(taskStatus ?? ""),
+  );
 
   const displayLogs = expanded ? logs : logs.slice(-MAX_VISIBLE);
   const hiddenCount = logs.length - MAX_VISIBLE;
@@ -205,6 +219,8 @@ export default function ReviewProgress({
   const stepCount = logs.filter((l) => l.step !== "tool_call").length;
   const statusText = isComplete
     ? "审查完成"
+    : isCancelled
+    ? "审查已取消"
     : isFailed
       ? "审查失败"
       : logs.length === 0
@@ -217,9 +233,20 @@ export default function ReviewProgress({
       <CardHeader className="pb-2">
         <CardTitle className={`text-base ${statusColor}`}>
           {logPolling ? (
-            <span className="flex items-center gap-2">
-              {timelineStatusText}
-            </span>
+            <div className="flex items-center justify-between gap-3">
+              <span className="flex items-center gap-2">{timelineStatusText}</span>
+              {canCancel && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="min-h-9 shrink-0"
+                  onClick={onCancel}
+                  disabled={cancelPending}
+                >
+                  {cancelPending ? "正在停止..." : "停止审查"}
+                </Button>
+              )}
+            </div>
           ) : (
             <button
               type="button"
@@ -227,7 +254,7 @@ export default function ReviewProgress({
               onClick={() => setExpanded(!expanded)}
               aria-expanded={expanded}
             >
-              {isComplete ? "审查完成" : isFailed ? "审查失败" : "审查进行中"}
+              {isComplete ? "审查完成" : isCancelled ? "审查已取消" : isFailed ? "审查失败" : "审查进行中"}
               <span className="text-xs text-muted-foreground font-normal ml-2">
                 {stepCount} 个步骤 · {logs.length} 条日志
               </span>

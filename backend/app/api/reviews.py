@@ -150,7 +150,7 @@ def _to_review_task_response(task: ReviewTask) -> ReviewTaskResponse:
 
 
 def _require_terminal(task: ReviewTask) -> None:
-    if task.status in {"pending", "preparing", "running"}:
+    if task.status in {"pending", "preparing", "running", "cancelling"}:
         raise HTTPException(status_code=409, detail="审查仍在进行中，完成后才能管理该记录")
 
 
@@ -187,9 +187,58 @@ def delete_review(task_id: str, db: Session = Depends(get_db)):
     db.commit()
 
 
+@router.post("/reviews/{task_id}/cancel", response_model=ReviewTaskResponse)
+def cancel_review(task_id: str, db: Session = Depends(get_db)):
+    """请求停止一条尚未结束的审查任务。"""
+    task = _get_review_task(task_id, db)
+    if task.status == "pending":
+        updated = (
+            db.query(ReviewTask)
+            .filter(ReviewTask.id == task.id, ReviewTask.status == "pending")
+            .update(
+                {
+                    ReviewTask.status: "cancelled",
+                    ReviewTask.completed_at: datetime.now(UTC),
+                    ReviewTask.error_message: "审查任务已取消，尚未开始执行。",
+                },
+                synchronize_session=False,
+            )
+        )
+    elif task.status in {"preparing", "running"}:
+        updated = (
+            db.query(ReviewTask)
+            .filter(
+                ReviewTask.id == task.id,
+                ReviewTask.status.in_({"preparing", "running"}),
+            )
+            .update(
+                {
+                    ReviewTask.status: "cancelling",
+                    ReviewTask.error_message: "正在停止审查任务...",
+                },
+                synchronize_session=False,
+            )
+        )
+    elif task.status == "cancelling":
+        return _to_review_task_response(task)
+    else:
+        raise HTTPException(status_code=409, detail="审查任务已经结束")
+    if updated != 1:
+        # 后台 Worker 可能恰好在本次请求期间完成任务；重新读取后不覆盖
+        # 已提交的终态，避免取消请求回写成 cancelling。
+        db.rollback()
+        db.refresh(task)
+        if task.status == "cancelling":
+            return _to_review_task_response(task)
+        raise HTTPException(status_code=409, detail="审查任务已经结束")
+    db.commit()
+    db.refresh(task)
+    return _to_review_task_response(task)
+
+
 @router.get("/reviews/{task_id}", response_model=ReviewTaskResponse)
 def get_review_status(task_id: str, db: Session = Depends(get_db)):
-    """轮询审查状态。返回当前 status（pending/running/done/failed）。"""
+    """轮询审查状态，包含 pending/running/cancelling/cancelled 等生命周期状态。"""
     task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
     if not task:
         raise HTTPException(status_code=404, detail="审查任务不存在")
@@ -203,7 +252,7 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
     if not task:
         raise HTTPException(status_code=404, detail="审查任务不存在")
 
-    if task.status != "done":
+    if task.status not in {"done", "cancelled"}:
         return ReviewReportResponse(review_id=task.id, status=task.status, report=None)
 
     report = db.query(ReviewReport).filter(ReviewReport.task_id == task_id).first()
@@ -218,11 +267,19 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
     checks = _normalise_report_checks(checks, quality)
     reviewer_outputs = stats.pop("reviewer_outputs", {})
     changes = stats.pop("changes", {})
+    code_database = stats.pop("code_database", {})
     review_status = stats.pop("review_status", None)
+    pending_reviewer_assignments = quality.get(
+        "pending_reviewer_assignments",
+        quality.get("pending_assignments", 0),
+    ) or 0
+    if review_status == "complete" and pending_reviewer_assignments > 0:
+        review_status = "degraded"
     if not review_status:
         review_status = (
             "degraded"
-            if any(check.get("status") in {"error", "fail"} for check in checks)
+            if pending_reviewer_assignments > 0
+            or any(check.get("status") in {"error", "fail"} for check in checks)
             else "complete"
         )
 
@@ -244,11 +301,24 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
             quality=quality,
             reviewer_outputs=reviewer_outputs,
             changes=changes,
+            code_database=code_database,
         ),
     )
 
 
 # ─── 审查引擎 ───────────────────────────────────────
+
+
+def _review_cancel_requested(task_id: str) -> bool:
+    """读取独立数据库会话中的取消请求，供长时间审查轮询。"""
+    from app.models.base import SessionLocal
+
+    db = SessionLocal()
+    try:
+        task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
+        return bool(task and task.status in {"cancelling", "cancelled"})
+    finally:
+        db.close()
 
 
 def _run_review_workflow(task_id: str):
@@ -261,6 +331,13 @@ def _run_review_workflow(task_id: str):
     try:
         task = db.query(ReviewTask).filter(ReviewTask.id == task_id).first()
         if not task:
+            return
+        if task.status == "cancelled":
+            return
+        if task.status == "cancelling":
+            task.status = "cancelled"
+            task.completed_at = datetime.now(UTC)
+            db.commit()
             return
 
         log_buffer = ReviewLogBuffer(task_id)
@@ -313,10 +390,16 @@ def _run_review_workflow(task_id: str):
             workspace_path=task.source_path,
             workspace_target=task.workspace_target,
             log_hook=log_hook,
+            cancel_check=lambda: _review_cancel_requested(task_id),
         )
 
         # 完成日志
-        log_hook(step="generate_report", level="info", message="审查完成")
+        cancelled = bool(result.get("cancel_requested")) or _review_cancel_requested(task_id)
+        log_hook(
+            step="generate_report",
+            level="warning" if cancelled else "info",
+            message="审查已取消，正在保存已完成结果..." if cancelled else "审查完成",
+        )
         log_buffer.flush()
 
         report = ReviewReport(
@@ -332,12 +415,14 @@ def _run_review_workflow(task_id: str):
                     "reviewer_outputs": result.get("reviewer_outputs", {}),
                     "changes": result.get("changes", {}),
                     "review_status": result.get("review_status", "complete"),
+                    "code_database": result.get("code_database", {}),
                 },
                 ensure_ascii=False,
             ),
         )
         db.add(report)
-        task.status = "done"
+        task.status = "cancelled" if cancelled else "done"
+        task.error_message = "审查任务已取消，报告仅包含取消前已完成的审查单元。" if cancelled else None
         changes = result.get("changes", {})
         task.workspace_fingerprint = changes.get("workspace_fingerprint")
         if changes.get("workspace_stats") is not None:

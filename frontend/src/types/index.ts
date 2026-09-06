@@ -25,7 +25,7 @@ export interface ReviewTask {
   workspace_target?: string | null;
   workspace_fingerprint?: string | null;
   workspace_stats_json?: string | null;
-  status: "pending" | "running" | "preparing" | "done" | "failed";
+  status: "pending" | "running" | "preparing" | "cancelling" | "cancelled" | "done" | "failed";
   risk_level?: string | null;
   error_message: string | null;
   reflection_rounds: number;
@@ -42,6 +42,10 @@ export interface Finding {
   reason: string;
   suggestion: string;
   evidence_type?: "reviewer" | "reviewer_context" | "static_check" | "tool_verified" | string;
+  evidence?: string | null;
+  evidence_refs?: Array<Record<string, unknown>>;
+  impact?: string | null;
+  confidence?: number | null;
 }
 
 export interface ReviewReport {
@@ -53,6 +57,7 @@ export interface ReviewReport {
   quality?: ReviewQualityMetrics;
   reviewer_outputs?: Record<string, ReviewerOutputTrace>;
   changes: ReviewChanges;
+  code_database?: Record<string, unknown>;
   stats: {
     total_findings: number;
     by_severity: Record<string, number>;
@@ -83,6 +88,7 @@ export interface ReviewCheck {
 }
 
 export interface ReviewerOutputAttempt {
+  unit_id?: string | null;
   stage: string;
   output: string;
   truncated: boolean;
@@ -91,6 +97,19 @@ export interface ReviewerOutputAttempt {
 export interface ReviewerOutputTrace {
   attempts: ReviewerOutputAttempt[];
   candidate_findings: Finding[];
+  input_coverage?: {
+    truncated_inputs?: number;
+    omitted_files?: string[];
+    tool_requests?: number;
+    tool_calls?: number;
+    tool_rounds?: number;
+    tool_budget_exhausted?: boolean;
+    tool_cache_hits?: number;
+    tool_cache_misses?: number;
+    tool_error_events?: Array<Record<string, unknown>>;
+    model_decision_errors?: number;
+    model_decision_events?: Array<Record<string, unknown>>;
+  };
   error_message: string | null;
 }
 
@@ -102,6 +121,51 @@ export interface ReviewQualityMetrics {
   located_findings: number;
   static_evidence_findings: number;
   reviewer_context_findings: number;
+  filtered_reasons?: Record<string, number>;
+  database_id?: string | null;
+  database_status?: string | null;
+  extraction_status?: string | null;
+  extraction_planned_files?: number;
+  extracted_files?: number;
+  extraction_errors?: Array<Record<string, unknown>>;
+  query_results?: number;
+  context_errors?: Record<string, string>;
+  tool_errors?: number;
+  planned_files?: number;
+  covered_files?: number;
+  uncovered_files?: string[];
+  planned_hunks?: number;
+  covered_hunks?: number;
+  context_covered_hunks?: number;
+  uncovered_hunks?: string[];
+  truncated_inputs?: number;
+  coverage_status?: string | null;
+  planned_units?: number;
+  reviewed_units?: number;
+  completed_units?: number;
+  attempted_units?: number;
+  pending_units?: number;
+  planned_assignments?: number;
+  planned_reviewer_assignments?: number;
+  reviewed_reviewer_assignments?: number;
+  completed_assignments?: number;
+  pending_assignments?: number;
+  pending_reviewer_assignments?: number;
+  pending_unit_ids?: string[];
+  primary_llm_calls?: number;
+  tool_calls?: number;
+  tool_requests?: number;
+  cache_hits?: number;
+  cache_misses?: number;
+  read_file_requests?: number;
+  read_file_cache_hits?: number;
+  read_file_cache_misses?: number;
+  read_file_errors?: number;
+  tool_budget_exhausted?: boolean;
+  elapsed_seconds?: number;
+  budget_exhausted?: boolean;
+  budget_exhausted_reason?: string | null;
+  cancel_requested?: boolean;
 }
 
 export interface ReviewReportResponse {
