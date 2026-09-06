@@ -92,6 +92,8 @@ export interface ReviewerOutputAttempt {
   stage: string;
   output: string;
   truncated: boolean;
+  finish_reason?: string | null;
+  usage?: Record<string, number>;
 }
 
 export interface ReviewerOutputTrace {
@@ -109,6 +111,13 @@ export interface ReviewerOutputTrace {
     tool_error_events?: Array<Record<string, unknown>>;
     model_decision_errors?: number;
     model_decision_events?: Array<Record<string, unknown>>;
+    provider_requests?: number;
+    llm_prompt_tokens?: number;
+    llm_completion_tokens?: number;
+    llm_total_tokens?: number;
+    llm_prompt_cache_hit_tokens?: number;
+    llm_prompt_cache_miss_tokens?: number;
+    llm_usage_events?: Array<Record<string, unknown>>;
   };
   error_message: string | null;
 }
@@ -153,6 +162,13 @@ export interface ReviewQualityMetrics {
   pending_reviewer_assignments?: number;
   pending_unit_ids?: string[];
   primary_llm_calls?: number;
+  provider_requests?: number;
+  llm_prompt_tokens?: number;
+  llm_completion_tokens?: number;
+  llm_total_tokens?: number;
+  llm_prompt_cache_hit_tokens?: number;
+  llm_prompt_cache_miss_tokens?: number;
+  llm_prompt_cache_hit_rate?: number;
   tool_calls?: number;
   tool_requests?: number;
   cache_hits?: number;

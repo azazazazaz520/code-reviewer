@@ -359,6 +359,7 @@ export default function ReviewDetail() {
     diagnosticChecks.length + contextFindingCount + filteredFindingCount;
   const reviewerOutputs = Object.entries(report.reviewer_outputs ?? {});
   const executionQuality = report.quality;
+  const hasPromptCacheMetrics = (executionQuality?.provider_requests ?? 0) > 0;
   const pendingUnitIds = executionQuality?.pending_unit_ids ?? [];
   const uncoveredFiles = executionQuality?.uncovered_files ?? [];
   const uncoveredHunks = executionQuality?.uncovered_hunks ?? [];
@@ -460,6 +461,12 @@ export default function ReviewDetail() {
             <span>
               文件缓存命中：{executionQuality?.read_file_cache_hits ?? executionQuality?.cache_hits ?? 0}
             </span>
+            {hasPromptCacheMetrics && (
+              <span>
+                Prompt Cache：{((executionQuality?.llm_prompt_cache_hit_rate ?? 0) * 100).toFixed(1)}%
+                （命中 {executionQuality?.llm_prompt_cache_hit_tokens ?? 0} / 未命中 {executionQuality?.llm_prompt_cache_miss_tokens ?? 0} token）
+              </span>
+            )}
             {executionQuality?.elapsed_seconds !== undefined && (
               <span>耗时：{executionQuality.elapsed_seconds.toFixed(1)} 秒</span>
             )}

@@ -33,7 +33,8 @@ class Settings(BaseSettings):
 
     # LLM
     llm_provider: str = "deepseek"
-    llm_model: str = "deepseek-chat"
+    # DeepSeek 旧模型名已进入下线周期；使用显式模型名，便于建立独立缓存基线。
+    llm_model: str = "deepseek-v4-flash"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 4096
     deepseek_api_key: str = ""

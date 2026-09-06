@@ -167,6 +167,13 @@ class ReviewQualityMetrics(BaseModel):
     pending_reviewer_assignments: int = 0
     pending_unit_ids: list[str] = Field(default_factory=list)
     primary_llm_calls: int = 0
+    provider_requests: int = 0
+    llm_prompt_tokens: int = 0
+    llm_completion_tokens: int = 0
+    llm_total_tokens: int = 0
+    llm_prompt_cache_hit_tokens: int = 0
+    llm_prompt_cache_miss_tokens: int = 0
+    llm_prompt_cache_hit_rate: float = 0
     tool_calls: int = 0
     tool_requests: int = 0
     cache_hits: int = 0

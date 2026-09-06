@@ -6,6 +6,7 @@ Reviewer = System Prompt + Tool 列表 + LLM 调用 → Finding[]。
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -19,10 +20,21 @@ from app.engine.tools.registry import (
     coerce_tool_arguments,
     get_tools_for_reviewer,
 )
-from app.engine.llm import get_llm, LLMProvider
+from app.engine.llm import (
+    LLM_USAGE_METRIC_FIELDS,
+    get_llm,
+    LLMProvider,
+)
 from app.engine.context import REVIEW_DIFF_BATCH_CHARS
 from app.engine.paths import PathSecurityError, relative_snapshot_path
 from app.engine.tools.context import TaskToolCache, TaskToolContext, ToolCallBudget
+
+
+COMMON_REVIEW_SYSTEM_PROMPT = """你负责对当前代码变更执行可验证的代码审查。
+
+只基于当前请求中的 Diff、代码上下文和 Tool 结果判断问题；每个 Finding 都必须有明确证据、现实影响、变更范围内的定位和可执行建议。无法验证的外部事实不生成 Finding。
+
+最终只返回 JSON 对象，根节点必须包含 findings 数组；没有达到证据门槛的问题才可以返回空数组。不要输出 Markdown、解释文字或代码围栏。"""
 
 
 class ReviewerOutputError(ValueError):
@@ -132,6 +144,65 @@ def _normalise_read_file_arguments(arguments: dict) -> dict:
     return normalised
 
 
+def _record_llm_usage(
+    context: ReviewerContext,
+    usage: object,
+    stage: str | None = None,
+    metadata: dict | None = None,
+) -> None:
+    """按实际 Provider 响应累计模型 token 与 Prompt Cache 指标。"""
+    if not isinstance(usage, dict):
+        return
+
+    coverage = context.input_coverage
+    request_index = coverage.get("provider_requests", 0) + 1
+    coverage["provider_requests"] = request_index
+    group_usage = context.llm_usage_state
+    group_request_index = group_usage.get("provider_requests", 0) + 1
+    group_usage["provider_requests"] = group_request_index
+    event = {
+        "task_id": context.task_id or None,
+        "reviewer": context.reviewer_name or None,
+        "unit_id": coverage.get("unit_id") or None,
+        "stage": stage or "unknown",
+        "model": (metadata or {}).get("model"),
+        "base_url": (metadata or {}).get("base_url"),
+        "provider_request_index": group_request_index,
+        "first_provider_request": group_request_index == 1,
+        "stable_prefix_hash": coverage.get("stable_prefix_hash"),
+        "dynamic_suffix_hash": coverage.get("dynamic_suffix_hash"),
+        "stable_prefix_chars": coverage.get("stable_prefix_chars", 0),
+        "dynamic_suffix_chars": coverage.get("dynamic_suffix_chars", 0),
+    }
+    for response_key, metric_key in LLM_USAGE_METRIC_FIELDS.items():
+        value = usage.get(response_key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            coverage[metric_key] = coverage.get(metric_key, 0) + value
+            event[response_key] = value
+    coverage.setdefault("llm_usage_events", []).append(event)
+    if context.log_hook:
+        context.log_hook(
+            step="run_reviews",
+            level="info",
+            message=(
+                "LLM Prompt Cache："
+                f"task={event['task_id'] or '-'} "
+                f"reviewer={event['reviewer'] or '-'} "
+                f"unit={event['unit_id'] or '-'} "
+                f"stage={event['stage']} "
+                f"model={event['model'] or '-'} "
+                f"first={event['first_provider_request']} "
+                f"prompt_tokens={event.get('prompt_tokens', 0)} "
+                f"hit={event.get('prompt_cache_hit_tokens', 0)} "
+                f"miss={event.get('prompt_cache_miss_tokens', 0)} "
+                f"stable_prefix_chars={event['stable_prefix_chars']} "
+                f"dynamic_suffix_chars={event['dynamic_suffix_chars']} "
+                f"stable_prefix_hash={event['stable_prefix_hash'] or '-'} "
+                f"dynamic_suffix_hash={event['dynamic_suffix_hash'] or '-'}"
+            ),
+        )
+
+
 @dataclass
 class ReviewerContext:
     """传入 Reviewer 的审查上下文。"""
@@ -149,6 +220,11 @@ class ReviewerContext:
     output_metadata_hook: Callable[[str, dict], None] | None = None
     cancel_check: Callable[[], bool] | None = None
     last_output_metadata: dict = field(default_factory=dict)
+    task_changed_files: list[str] = field(default_factory=list)
+    shared_file_context: dict[str, str] = field(default_factory=dict)
+    task_id: str = ""
+    reviewer_name: str = ""
+    llm_usage_state: dict = field(default_factory=dict)
 
 
 class BaseReviewer(ABC):
@@ -318,7 +394,54 @@ class BaseReviewer(ABC):
 
     def _build_messages(self, context: ReviewerContext) -> list[dict]:
         """构建发送给 LLM 的消息列表。"""
-        user_parts = []
+        stable_parts = [
+            "## 审查任务\n"
+            "prompt_schema: review-cache-v1"
+        ]
+
+        task_changed_files = context.task_changed_files or context.changed_files
+        if context.revision:
+            stable_parts.append(
+                "## 审查快照\n"
+                f"revision: {context.revision}"
+            )
+
+        if task_changed_files:
+            displayed_task_files = sorted(
+                {
+                    self._display_path(context, file_path)
+                    for file_path in task_changed_files
+                }
+            )
+            stable_parts.append(
+                "## 变更文件清单\n"
+                + "\n".join(
+                    f"- {file_path}" for file_path in displayed_task_files
+                )
+            )
+
+        if context.shared_file_context:
+            shared_parts = []
+            for fp in sorted(context.shared_file_context):
+                display_path = self._display_path(context, fp)
+                shared_parts.append(
+                    f"### {display_path}\n```\n"
+                    f"{context.shared_file_context[fp]}\n```"
+                )
+            stable_parts.append(
+                "## 稳定文件上下文\n" + "\n".join(shared_parts)
+            )
+
+        dynamic_parts = []
+
+        if context.changed_files:
+            dynamic_parts.append(
+                "## 当前审查单元\n"
+                + "\n".join(
+                    f"- {self._display_path(context, file_path)}"
+                    for file_path in context.changed_files
+                )
+            )
 
         if context.diff and context.diff != "(no changes)":
             # 语义 ReviewUnit 已保证单元不超过该预算；这里不能再用旧的
@@ -331,26 +454,15 @@ class BaseReviewer(ABC):
                     f"原始长度 {len(context.diff)}；请以快照 Tool 查询为准]"
                 )
                 _record_truncation(context, "diff:character_budget")
-            user_parts.append(f"## 代码变更 (diff)\n```diff\n{diff}\n```")
-
-        if context.changed_files:
-            user_parts.append(
-                "## 变更文件\n"
-                + "\n".join(
-                    f"- {self._display_path(context, file_path)}"
-                    for file_path in context.changed_files
-                )
-            )
-
-        if context.revision:
-            user_parts.append(
-                "## 审查快照\n"
-                f"revision: {context.revision}"
-            )
+            dynamic_parts.append(f"## 代码变更 (diff)\n```diff\n{diff}\n```")
 
         if context.file_context:
             ctx_parts = []
-            for fp, content in context.file_context.items():
+            for fp in sorted(
+                context.file_context,
+                key=lambda path: self._display_path(context, path),
+            ):
+                content = context.file_context[fp]
                 display_path = self._display_path(context, fp)
                 file_limit = max(1, settings.review_context_max_chars)
                 displayed = content[:file_limit]
@@ -361,11 +473,40 @@ class BaseReviewer(ABC):
                     )
                     _record_truncation(context, f"file:{display_path}:character_budget")
                 ctx_parts.append(f"### {display_path}\n```\n{displayed}\n```")
-            user_parts.append("## 文件内容\n" + "\n".join(ctx_parts))
+            if ctx_parts:
+                dynamic_parts.append("## 当前文件上下文\n" + "\n".join(ctx_parts))
 
+        system_content = f"{COMMON_REVIEW_SYSTEM_PROMPT}\n\n{self.system_prompt}"
+        stable_content = "\n\n".join(stable_parts)
+        dynamic_content = "\n\n".join(dynamic_parts)
+        context.input_coverage.update(
+            {
+                "stable_prefix_hash": hashlib.sha256(
+                    json.dumps(
+                        [
+                            {"role": "system", "content": system_content},
+                            {"role": "user", "content": stable_content},
+                        ],
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ).encode("utf-8")
+                ).hexdigest()[:16],
+                "dynamic_suffix_hash": hashlib.sha256(
+                    dynamic_content.encode("utf-8")
+                ).hexdigest()[:16],
+                "stable_prefix_chars": len(system_content) + len(stable_content),
+                "dynamic_suffix_chars": len(dynamic_content),
+            }
+        )
+        user_content = "\n\n".join(
+            part for part in (stable_content, dynamic_content) if part
+        )
         return [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": "\n\n".join(user_parts)},
+            {
+                "role": "system",
+                "content": system_content,
+            },
+            {"role": "user", "content": user_content},
         ]
 
     @staticmethod
@@ -396,6 +537,12 @@ class BaseReviewer(ABC):
         def capture_metadata(metadata: dict) -> None:
             if isinstance(metadata, dict):
                 output_metadata.update(metadata)
+                _record_llm_usage(
+                    context,
+                    metadata.get("usage"),
+                    metadata.get("stage"),
+                    metadata,
+                )
 
         if tools and handlers:
             output = self.llm.chat_with_tools(
@@ -416,17 +563,26 @@ class BaseReviewer(ABC):
                 raise ReviewCancelled("审查任务已取消")
             result = self.llm.chat(
                 messages,
+                response_format={"type": "json_object"},
                 timeout_seconds=settings.reviewer_timeout_seconds,
             )
-            output = result.get("content", "")
             if isinstance(result, dict):
-                output_metadata.update(
+                output = result.get("content", "")
+                metadata = {
+                    "stage": "single_request",
+                    "model": getattr(self.llm, "model", None),
+                    "base_url": getattr(self.llm, "base_url", None),
+                }
+                metadata.update(
                     {
                         key: result[key]
                         for key in ("finish_reason", "usage")
                         if result.get(key) is not None
                     }
                 )
+                capture_metadata(metadata)
+            else:
+                output = ""
 
         if context.tool_budget:
             context.input_coverage["tool_calls"] = int(
@@ -584,6 +740,16 @@ class BaseReviewer(ABC):
                     response_format={"type": "json_object"},
                     timeout_seconds=settings.reviewer_timeout_seconds,
                 )
+                if isinstance(repaired, dict):
+                    _record_llm_usage(
+                        context,
+                        repaired.get("usage"),
+                        "format_repair",
+                        {
+                            "model": getattr(self.llm, "model", None),
+                            "base_url": getattr(self.llm, "base_url", None),
+                        },
+                    )
                 repaired_output = repaired.get("content") if isinstance(repaired, dict) else ""
                 if context.output_hook:
                     context.output_hook(

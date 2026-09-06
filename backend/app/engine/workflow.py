@@ -87,6 +87,7 @@ def run_workflow(
     workspace_target: str | None = None,
     log_hook: Callable | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    task_id: str | None = None,
 ) -> dict:
     """运行审查 Workflow，返回报告 dict。"""
     snapshot = create_review_snapshot(
@@ -105,6 +106,7 @@ def run_workflow(
     )
     try:
         initial_state: ReviewState = {
+            "task_id": task_id or "",
             "repo_id": snapshot.repo_root,
             "git_url": git_url,
             "review_type": review_type,

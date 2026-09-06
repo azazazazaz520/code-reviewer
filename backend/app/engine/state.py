@@ -4,6 +4,8 @@ from typing import TypedDict
 
 
 class ReviewState(TypedDict, total=False):
+    task_id: str
+
     # PR 元信息
     repo_id: str
     review_type: str  # "pr" | "local"

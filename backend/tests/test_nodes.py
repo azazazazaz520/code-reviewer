@@ -566,6 +566,40 @@ class RunReviewsNodeTests(unittest.TestCase):
         self.assertEqual(result["coverage"]["truncated_inputs"], 2)
         self.assertEqual(result["coverage"]["tool_errors"], 2)
 
+    def test_prompt_cache_metrics_are_aggregated_by_provider_request(self):
+        class UsageReviewer:
+            def review(self, context):
+                context.input_coverage.update(
+                    {
+                        "provider_requests": 2,
+                        "llm_prompt_tokens": 220,
+                        "llm_completion_tokens": 14,
+                        "llm_total_tokens": 234,
+                        "llm_prompt_cache_hit_tokens": 160,
+                        "llm_prompt_cache_miss_tokens": 60,
+                    }
+                )
+                return []
+
+        reviewers_module.REVIEWER_REGISTRY.update({"style_reviewer": UsageReviewer()})
+
+        result = run_reviews_node(self._state())
+
+        self.assertEqual(result["quality_metrics"]["provider_requests"], 2)
+        self.assertEqual(result["quality_metrics"]["llm_prompt_tokens"], 220)
+        self.assertEqual(
+            result["quality_metrics"]["llm_prompt_cache_hit_tokens"],
+            160,
+        )
+        self.assertEqual(
+            result["quality_metrics"]["llm_prompt_cache_miss_tokens"],
+            60,
+        )
+        self.assertAlmostEqual(
+            result["quality_metrics"]["llm_prompt_cache_hit_rate"],
+            160 / 220,
+        )
+
     def test_model_decision_errors_do_not_create_tool_error_check(self):
         reviewers_module.REVIEWER_REGISTRY.update(
             {"style_reviewer": _ModelDecisionReviewer()}

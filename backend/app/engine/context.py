@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import re
 
 from app.config import settings
-from app.engine.paths import normalize_relative_path
+from app.engine.paths import PathSecurityError, normalize_relative_path
 
 
 @dataclass(frozen=True)
@@ -49,6 +49,78 @@ def _reviewer_context_budget(reviewer_name: str) -> ContextBudget:
         max_files=max(1, settings.review_context_max_files or default.max_files),
         max_chars=max(1, settings.review_context_max_chars or default.max_chars),
     )
+
+
+def build_stable_file_context(
+    file_context: dict[str, str],
+    primary_file: str,
+    reviewer_name: str,
+) -> dict[str, str]:
+    """兼容旧调用方，构造只包含主文件的稳定上下文包。"""
+    return build_stable_context_pack(
+        file_context,
+        [primary_file],
+        reviewer_name,
+    )
+
+
+def build_stable_context_pack(
+    file_context: dict[str, str],
+    preferred_files: list[str],
+    reviewer_name: str,
+) -> dict[str, str]:
+    """构造同一 Reviewer 所有 ReviewUnit 共享的稳定上下文包。
+
+    共享包只保留固定顺序的文件前缀，且单文件共享上下文不超过 Reviewer 预算的一半。
+    已进入共享包的文件不需要在每个 ReviewUnit 的动态后缀中重复发送；未进入
+    共享包的关联文件仍由 ``select_reviewer_unit_context`` 提供。
+    """
+    normalised_context: dict[str, str] = {}
+    for path, content in file_context.items():
+        try:
+            normalised_path = normalize_relative_path(path)
+        except PathSecurityError:
+            continue
+        if isinstance(content, str):
+            normalised_context[normalised_path] = content
+
+    if not normalised_context:
+        return {}
+
+    preferred: set[str] = set()
+    for path in preferred_files:
+        try:
+            normalised = normalize_relative_path(path)
+        except PathSecurityError:
+            continue
+        if normalised in normalised_context:
+            preferred.add(normalised)
+    ordered_paths = [
+        *sorted(preferred),
+        *sorted(set(normalised_context) - preferred),
+    ]
+
+    budget = _reviewer_context_budget(reviewer_name)
+    max_chars = max(1, budget.max_chars // 2)
+    selected: dict[str, str] = {}
+    total_chars = 0
+    for path in ordered_paths[:budget.max_files]:
+        if total_chars >= max_chars:
+            break
+        remaining = max_chars - total_chars
+        original = normalised_context[path]
+        content = original[:remaining]
+        if len(original) > remaining:
+            marker = (
+                f"\n[共享上下文截断：{path} 仅展示前 {remaining} 个字符，"
+                f"原始长度 {len(original)}；请以快照 Tool 查询为准]"
+            )
+            content = (
+                original[: max(0, remaining - len(marker))] + marker
+            )[:remaining]
+        selected[path] = content
+        total_chars += len(content)
+    return selected
 
 
 def select_reviewer_context(

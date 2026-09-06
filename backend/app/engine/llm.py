@@ -6,10 +6,27 @@
 from __future__ import annotations
 
 import json
+from typing import Callable
+
 from openai import OpenAI
 
 from app.config import settings
-from typing import Callable
+
+
+LLM_USAGE_RESPONSE_FIELDS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens",
+)
+LLM_USAGE_METRIC_FIELDS = {
+    "prompt_tokens": "llm_prompt_tokens",
+    "completion_tokens": "llm_completion_tokens",
+    "total_tokens": "llm_total_tokens",
+    "prompt_cache_hit_tokens": "llm_prompt_cache_hit_tokens",
+    "prompt_cache_miss_tokens": "llm_prompt_cache_miss_tokens",
+}
 
 
 class LLMProvider:
@@ -28,6 +45,7 @@ class LLMProvider:
             api_key=settings.deepseek_api_key if api_key is None else api_key,
             base_url=settings.deepseek_base_url if base_url is None else base_url,
         )
+        self.base_url = settings.deepseek_base_url if base_url is None else base_url
         self.model = settings.llm_model if model is None else model
         self.temperature = settings.llm_temperature if temperature is None else temperature
         self.max_tokens = settings.llm_max_tokens if max_tokens is None else max_tokens
@@ -43,7 +61,7 @@ class LLMProvider:
         """单次 LLM 调用，返回完整响应。
 
         Returns:
-            {"content": str | None, "tool_calls": list | None}
+            {"content": str | None, "tool_calls": list | None, "usage": dict}
         """
         kwargs = dict(
             model=self.model,
@@ -66,7 +84,7 @@ class LLMProvider:
         usage = getattr(response, "usage", None)
         usage_data = {
             key: getattr(usage, key)
-            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            for key in LLM_USAGE_RESPONSE_FIELDS
             if usage is not None and getattr(usage, key, None) is not None
         }
 
@@ -83,6 +101,29 @@ class LLMProvider:
             "finish_reason": choice.finish_reason,
             "usage": usage_data,
         }
+
+    def _response_metadata(
+        self,
+        result: dict,
+        *,
+        stage: str,
+        **extra: object,
+    ) -> dict:
+        """构造不包含提示词内容的 Provider 响应元数据。"""
+        metadata = {
+            "stage": stage,
+            "model": getattr(self, "model", None),
+            "base_url": getattr(self, "base_url", None),
+            **extra,
+        }
+        metadata.update(
+            {
+                key: result[key]
+                for key in ("finish_reason", "usage")
+                if result.get(key) is not None
+            }
+        )
+        return metadata
 
     def _finalize_json(
         self,
@@ -106,11 +147,7 @@ class LLMProvider:
         def notify(result: dict) -> None:
             if response_meta_hook:
                 response_meta_hook(
-                    {
-                        key: result[key]
-                        for key in ("finish_reason", "usage")
-                        if result.get(key) is not None
-                    }
+                    self._response_metadata(result, stage="finalize_json")
                 )
 
         if cancel_check and cancel_check():
@@ -146,7 +183,10 @@ class LLMProvider:
             response_format=json_format,
             timeout_seconds=timeout_seconds,
         )
-        notify(retry)
+        if response_meta_hook:
+            response_meta_hook(
+                self._response_metadata(retry, stage="finalize_retry")
+            )
         retry_content = retry.get("content")
         return retry_content if isinstance(retry_content, str) else ""
 
@@ -182,7 +222,7 @@ class LLMProvider:
                     }
                 )
 
-        for _ in range(max_rounds):
+        for round_index in range(max_rounds):
             tool_round_count += 1
             if cancel_check and cancel_check():
                 from app.engine.execution import ReviewCancelled
@@ -191,11 +231,15 @@ class LLMProvider:
             result = self.chat(msgs, tools=tools, timeout_seconds=timeout_seconds)
             if response_meta_hook:
                 response_meta_hook(
-                    {
-                        key: result[key]
-                        for key in ("finish_reason", "usage")
-                        if result.get(key) is not None
-                    }
+                    self._response_metadata(
+                        result,
+                        stage=(
+                            "tool_selection"
+                            if round_index == 0
+                            else f"tool_round_{round_index + 1}"
+                        ),
+                        round=round_index + 1,
+                    )
                 )
 
             content = result.get("content")
@@ -318,11 +362,7 @@ class LLMProvider:
         )
         if response_meta_hook:
             response_meta_hook(
-                {
-                    key: final[key]
-                    for key in ("finish_reason", "usage")
-                    if final.get(key) is not None
-                }
+                self._response_metadata(final, stage="finalize_json")
             )
         content = final.get("content")
         if isinstance(content, str) and content.strip():
@@ -353,11 +393,7 @@ class LLMProvider:
         )
         if response_meta_hook:
             response_meta_hook(
-                {
-                    key: retry[key]
-                    for key in ("finish_reason", "usage")
-                    if retry.get(key) is not None
-                }
+                self._response_metadata(retry, stage="finalize_retry")
             )
         retry_content = retry.get("content")
         return retry_content if isinstance(retry_content, str) else ""

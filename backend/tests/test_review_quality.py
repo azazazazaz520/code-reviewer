@@ -3,6 +3,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 from app.config import settings
@@ -10,6 +11,8 @@ from app.engine.finding_gate import filter_findings
 from app.engine.context import (
     ContextBudget,
     REVIEW_DIFF_BATCH_CHARS,
+    build_stable_context_pack,
+    build_stable_file_context,
     select_reviewer_context_batches,
     select_reviewer_context_with_metadata,
     split_diff_batches,
@@ -47,6 +50,148 @@ class ReviewQualityTests(unittest.TestCase):
         context = ReviewerContext(diff="d" * (settings.review_unit_max_chars + 1))
         StyleReviewer()._build_messages(context)
         self.assertEqual(context.input_coverage["truncated_inputs"], 1)
+
+    def test_reviewer_messages_keep_task_prefix_before_unit_diff(self):
+        reviewer = StyleReviewer()
+        common = {
+            "revision": "rev-1",
+            "task_changed_files": ["src/a.py", "src/b.py"],
+            "shared_file_context": {"src/a.py": "value = 1\n"},
+        }
+        first = reviewer._build_messages(
+            ReviewerContext(
+                **common,
+                changed_files=["src/a.py"],
+                diff="+value = 2\n",
+            )
+        )
+        second = reviewer._build_messages(
+            ReviewerContext(
+                **common,
+                changed_files=["src/a.py"],
+                diff="+value = 3\n",
+            )
+        )
+
+        first_prefix = first[1]["content"].split("## 当前审查单元", 1)[0]
+        second_prefix = second[1]["content"].split("## 当前审查单元", 1)[0]
+        self.assertEqual(first_prefix, second_prefix)
+        self.assertIn("revision: rev-1", first_prefix)
+        self.assertIn("src/a.py", first_prefix)
+        self.assertNotIn("+value = 2", first_prefix)
+        self.assertNotIn("+value = 3", second_prefix)
+
+    def test_stable_file_context_is_bounded(self):
+        content = "x" * (settings.review_context_max_chars + 1)
+
+        result = build_stable_file_context(
+            {"src/app.py": content},
+            "src/app.py",
+            "style_reviewer",
+        )
+
+        self.assertEqual(
+            len(result["src/app.py"]),
+            settings.review_context_max_chars // 2,
+        )
+        self.assertIn("共享上下文截断", result["src/app.py"])
+
+    def test_stable_context_pack_is_same_for_different_review_units(self):
+        file_context = {
+            "src/b.py": "b" * 100,
+            "src/a.py": "a" * 100,
+        }
+
+        first = build_stable_context_pack(
+            file_context,
+            ["src/a.py", "src/b.py"],
+            "style_reviewer",
+        )
+        second = build_stable_context_pack(
+            file_context,
+            ["src/b.py", "src/a.py"],
+            "style_reviewer",
+        )
+
+        self.assertEqual(first, second)
+        self.assertEqual(list(first), ["src/a.py", "src/b.py"])
+
+    def test_reviewer_records_each_provider_usage_response(self):
+        class UsageReviewer(BaseReviewer):
+            name = "usage_reviewer"
+            system_prompt = "test"
+            required_tools = ["ReadFile"]
+
+            def review(self, context):
+                return self._parse_findings(self._call_llm(context))
+
+        class FakeLLM:
+            def chat(self, _messages, **_kwargs):
+                return {"content": "[]", "usage": {}}
+
+            def chat_with_tools(self, _messages, _tools, _handlers, response_meta_hook=None, **_kwargs):
+                if response_meta_hook:
+                    response_meta_hook(
+                        {
+                            "stage": "tool_selection",
+                            "usage": {
+                                "prompt_tokens": 100,
+                                "completion_tokens": 8,
+                                "total_tokens": 108,
+                                "prompt_cache_hit_tokens": 64,
+                                "prompt_cache_miss_tokens": 36,
+                            },
+                        }
+                    )
+                    response_meta_hook(
+                        {
+                            "stage": "finalize_json",
+                            "usage": {
+                                "prompt_tokens": 120,
+                                "completion_tokens": 6,
+                                "total_tokens": 126,
+                                "prompt_cache_hit_tokens": 96,
+                                "prompt_cache_miss_tokens": 24,
+                            },
+                        }
+                    )
+                return "[]"
+
+        reviewer = UsageReviewer()
+        reviewer._llm = FakeLLM()
+        logs = []
+        context = ReviewerContext(
+            task_id="task-1",
+            reviewer_name="usage_reviewer",
+            input_coverage={"unit_id": "unit-1"},
+            log_hook=lambda **entry: logs.append(entry),
+        )
+
+        self.assertEqual(reviewer.review(context), [])
+        self.assertEqual(context.input_coverage["provider_requests"], 2)
+        self.assertEqual(context.input_coverage["llm_prompt_tokens"], 220)
+        self.assertEqual(context.input_coverage["llm_prompt_cache_hit_tokens"], 160)
+        self.assertEqual(context.input_coverage["llm_prompt_cache_miss_tokens"], 60)
+        self.assertEqual(
+            [event["stage"] for event in context.input_coverage["llm_usage_events"]],
+            ["tool_selection", "finalize_json"],
+        )
+        self.assertEqual(
+            context.input_coverage["llm_usage_events"][0]["task_id"],
+            "task-1",
+        )
+        self.assertTrue(
+            context.input_coverage["llm_usage_events"][0]["first_provider_request"]
+        )
+        self.assertFalse(
+            context.input_coverage["llm_usage_events"][1]["first_provider_request"]
+        )
+        self.assertEqual(
+            context.input_coverage["llm_usage_events"][1]["provider_request_index"],
+            2,
+        )
+        self.assertEqual(len(logs), 2)
+        self.assertNotIn("value =", logs[0]["message"])
 
     def test_reviewer_messages_hide_snapshot_absolute_root(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1015,6 +1160,36 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(result, '{"findings":[]}')
         self.assertEqual(calls[1]["kwargs"]["response_format"], {"type": "json_object"})
         self.assertIn("分析过程很长", calls[1]["messages"][-2]["content"])
+
+    def test_llm_provider_exposes_deepseek_prompt_cache_usage(self):
+        provider = object.__new__(LLMProvider)
+        provider.model = "deepseek-chat"
+        provider.base_url = "https://api.deepseek.com/v1"
+        provider.temperature = 0
+        provider.max_tokens = 100
+        response = SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="[]", tool_calls=[]),
+                    finish_reason="stop",
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=220,
+                completion_tokens=14,
+                total_tokens=234,
+                prompt_cache_hit_tokens=160,
+                prompt_cache_miss_tokens=60,
+            ),
+        )
+        provider.client = mock.Mock()
+        provider.client.chat.completions.create.return_value = response
+
+        result = provider.chat([{"role": "user", "content": "review"}])
+
+        self.assertEqual(result["usage"]["prompt_tokens"], 220)
+        self.assertEqual(result["usage"]["prompt_cache_hit_tokens"], 160)
+        self.assertEqual(result["usage"]["prompt_cache_miss_tokens"], 60)
 
     def test_tool_call_review_recovers_from_empty_forced_final_response(self):
         provider = object.__new__(LLMProvider)

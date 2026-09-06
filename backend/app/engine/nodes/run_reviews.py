@@ -12,8 +12,10 @@ from typing import Iterable
 
 from app.config import settings
 from app.engine.state import ReviewState
+from app.engine.llm import LLM_USAGE_METRIC_FIELDS
 from app.engine.reviewers import REVIEWER_REGISTRY, ReviewerContext
 from app.engine.context import (
+    build_stable_context_pack,
     pair_reviewer_batches,
     select_reviewer_unit_context,
     select_reviewer_context_batches,
@@ -173,6 +175,14 @@ def _merge_input_coverage(target: dict, incoming: dict) -> None:
     ]:
         if isinstance(event, dict) and event.get("key"):
             model_decision_events[event["key"]] = event
+    llm_usage_events = [
+        event
+        for event in [
+            *target.get("llm_usage_events", []),
+            *incoming.get("llm_usage_events", []),
+        ]
+        if isinstance(event, dict)
+    ]
 
     target.update(
         {
@@ -196,6 +206,7 @@ def _merge_input_coverage(target: dict, incoming: dict) -> None:
                 target.get("model_decision_errors", 0),
                 incoming.get("model_decision_errors", 0),
             ),
+            "llm_usage_events": llm_usage_events,
         }
     )
 
@@ -208,6 +219,7 @@ def _merge_input_coverage(target: dict, incoming: dict) -> None:
             "tool_errors",
             "model_decision_events",
             "model_decision_errors",
+            "llm_usage_events",
         }:
             if key in {
                 "tool_requests",
@@ -215,12 +227,43 @@ def _merge_input_coverage(target: dict, incoming: dict) -> None:
                 "tool_rounds",
                 "tool_cache_hits",
                 "tool_cache_misses",
+                "provider_requests",
+                *LLM_USAGE_METRIC_FIELDS.values(),
             }:
                 target[key] = target.get(key, 0) + value
             elif key == "tool_budget_exhausted":
                 target[key] = bool(target.get(key)) or bool(value)
             else:
                 target[key] = value
+
+
+def _aggregate_llm_usage(reviewer_outputs: dict[str, dict]) -> dict[str, int | float]:
+    """从各 Reviewer trace 汇总实际 Provider 请求的模型 token。"""
+    metric_keys = ("provider_requests", *LLM_USAGE_METRIC_FIELDS.values())
+    totals = {key: 0 for key in metric_keys}
+    for trace in reviewer_outputs.values():
+        input_coverage = trace.get("input_coverage", {})
+        if not isinstance(input_coverage, dict):
+            continue
+        for key in metric_keys:
+            value = input_coverage.get(key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                totals[key] += value
+
+    prompt_tokens = totals["llm_prompt_tokens"]
+    if prompt_tokens <= 0:
+        return {}
+
+    cache_tokens = (
+        totals["llm_prompt_cache_hit_tokens"]
+        + totals["llm_prompt_cache_miss_tokens"]
+    )
+    totals["llm_prompt_cache_hit_rate"] = (
+        totals["llm_prompt_cache_hit_tokens"] / cache_tokens
+        if cache_tokens > 0
+        else 0.0
+    )
+    return totals
 
 
 def _execute_reviewer_group(
@@ -248,6 +291,22 @@ def _execute_reviewer_group(
     completed_unit_ids: set[str] = set()
     attempted_unit_ids: set[str] = set()
     current_unit_id = ""
+    previous_coverage = previous_trace.get("input_coverage", {})
+    llm_usage_state = {
+        "provider_requests": (
+            previous_coverage.get("provider_requests", 0)
+            if isinstance(previous_coverage, dict)
+            else 0
+        )
+    }
+    shared_context_pack = build_stable_context_pack(
+        state.get("file_context_cache", {}),
+        [
+            *state.get("changed_files", []),
+            *state.get("context_candidates", []),
+        ],
+        reviewer_name,
+    )
 
     def capture_output(stage: str, output: str) -> None:
         max_chars = 20000
@@ -291,7 +350,12 @@ def _execute_reviewer_group(
         context = ReviewerContext(
             diff=unit.get("diff", ""),
             changed_files=[unit.get("primary_file", "")],
+            task_changed_files=list(state.get("changed_files", [])),
             file_context=selection.files,
+            shared_file_context=shared_context_pack,
+            task_id=state.get("task_id", ""),
+            reviewer_name=reviewer_name,
+            llm_usage_state=llm_usage_state,
             repo_root=state.get("repo_id", "."),
             revision=state.get("snapshot_revision", ""),
             tool_context=state.get("tool_context"),
@@ -606,6 +670,7 @@ def run_reviews_node(state: ReviewState) -> ReviewState:
     coverage["tool_errors"] = tool_errors
     if tool_errors:
         coverage["coverage_status"] = "incomplete"
+    coverage.update(_aggregate_llm_usage(reviewer_outputs))
     state["coverage"] = coverage
 
     rejection_reasons: dict[str, int] = {}

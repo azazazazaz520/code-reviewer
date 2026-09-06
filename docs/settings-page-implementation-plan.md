@@ -228,7 +228,7 @@ gitee.token
   "settings": {
     "llm": {
       "provider": "deepseek-openai-compatible",
-      "model": "deepseek-chat",
+      "model": "deepseek-v4-flash",
       "base_url": "https://api.deepseek.com/v1",
       "temperature": 0.1,
       "max_tokens": 4096
@@ -266,7 +266,7 @@ P0/P1 后端 API 只负责非敏感设置读取、非敏感配置保存和使用
   "expected_version": 3,
   "settings": {
     "llm": {
-      "model": "deepseek-chat",
+      "model": "deepseek-v4-flash",
       "temperature": 0.1,
       "max_tokens": 4096
     },
