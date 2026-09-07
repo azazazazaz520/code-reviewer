@@ -20,6 +20,23 @@ class ComputeQualityMetricsTests(unittest.TestCase):
         self.assertEqual(metrics["filtered_findings"], 1)
         self.assertEqual(metrics["located_findings"], 1)
 
+    def test_duplicate_findings_are_tracked_without_counting_as_filtered(self):
+        findings = [
+            {"severity": "low", "file": "a.py", "line": 1},
+            {"severity": "low", "file": "a.py", "line": 1},
+        ]
+
+        metrics = compute_quality_metrics(
+            findings,
+            [findings[0]],
+            {},
+            rejection_reasons={"duplicate_finding": 1},
+        )
+
+        self.assertEqual(metrics["filtered_findings"], 0)
+        self.assertEqual(metrics["duplicate_findings"], 1)
+        self.assertEqual(metrics["filtered_reasons"], {"duplicate_finding": 1})
+
     def test_static_and_context_evidence_are_counted(self):
         findings = [
             {"evidence_type": "static_check"},
@@ -63,6 +80,28 @@ class BuildQualityChecksTests(unittest.TestCase):
         self.assertEqual(checks[0]["name"], "finding_gate")
         self.assertEqual(checks[0]["status"], "warning")
 
+    def test_out_of_scope_findings_explain_current_diff_boundary(self):
+        checks = build_quality_checks(
+            {
+                "filtered_findings": 2,
+                "filtered_reasons": {"outside_current_diff": 2},
+                "reviewer_context_findings": 0,
+            }
+        )
+
+        self.assertIn("超出当前 Diff 范围", checks[0]["message"])
+
+    def test_duplicate_findings_do_not_produce_gate_warning(self):
+        self.assertEqual(
+            build_quality_checks(
+                {
+                    "filtered_findings": 1,
+                    "filtered_reasons": {"duplicate_finding": 1},
+                }
+            ),
+            [],
+        )
+
     def test_context_findings_produce_review_warning(self):
         checks = build_quality_checks(
             {"filtered_findings": 0, "reviewer_context_findings": 2}
@@ -77,6 +116,30 @@ class BuildQualityChecksTests(unittest.TestCase):
             build_quality_checks({"filtered_findings": 0, "reviewer_context_findings": 0}),
             [],
         )
+
+    def test_related_context_limits_do_not_produce_truncation_warning(self):
+        checks = build_quality_checks(
+            {
+                "filtered_findings": 0,
+                "reviewer_context_findings": 0,
+                "truncated_inputs": 0,
+                "context_limited_inputs": 3,
+            }
+        )
+
+        self.assertEqual(checks, [])
+
+    def test_critical_truncation_still_produces_warning(self):
+        checks = build_quality_checks(
+            {
+                "filtered_findings": 0,
+                "reviewer_context_findings": 0,
+                "critical_truncated_inputs": 1,
+            }
+        )
+
+        self.assertEqual(checks[0]["name"], "review_input_truncation")
+        self.assertIn("Diff 或主变更文件", checks[0]["message"])
 
     def test_merge_checks_replaces_duplicate_named_checks(self):
         merged = merge_checks(

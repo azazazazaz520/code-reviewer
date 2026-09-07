@@ -36,7 +36,11 @@ def derive_review_status(workflow_errors: list, quality: dict) -> str:
         return "degraded"
     if quality.get("truncated_inputs", 0) > 0:
         return "degraded"
-    if quality.get("tool_errors", 0) > 0 or quality.get("tool_budget_exhausted"):
+    if (
+        quality.get("failed_batches", 0) > 0
+        or quality.get("context_request_failures", 0) > 0
+        or quality.get("output_repair_failures", 0) > 0
+    ):
         return "degraded"
     if quality.get("budget_exhausted") or quality.get("cancel_requested"):
         return "degraded"
@@ -49,9 +53,9 @@ def derive_review_status(workflow_errors: list, quality: dict) -> str:
         return "degraded"
     if quality.get("coverage_status") not in {None, "complete"}:
         return "degraded"
-    if quality.get("database_status") not in {None, "ready"}:
+    if quality.get("database_status") not in {None, "ready", "skipped"}:
         return "degraded"
-    if quality.get("extraction_status") not in {None, "complete"}:
+    if quality.get("extraction_status") not in {None, "complete", "skipped"}:
         return "degraded"
     return "complete"
 

@@ -31,7 +31,7 @@ def validate_changes_node(state: ReviewState) -> ReviewState:
     state["checks"] = checks
     if hook := state.get("_log_hook"):
         hook(
-            step="validate_changes",
+            step="prepare_review",
             level="info",
             message=(
                 f"确定性校验完成: {len(validator_findings)} 个问题，"

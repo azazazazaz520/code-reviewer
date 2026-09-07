@@ -146,7 +146,7 @@ low:
 
 # 输出格式
 
-严格返回 JSON 数组。
+严格返回 JSON 对象，根节点包含 findings 和 context_requests 数组。
 
 每个发现包含：
 
@@ -168,6 +168,8 @@ low:
 - 不要把同一位置的问题按类型拆分输出
 
 
+每个批次最多返回 5 条最重要的问题。title 不超过 80 个字符，reason、suggestion 各不超过 400 个字符，evidence 不超过 300 个字符；禁止重复结论、复述 Diff 或输出分析过程。
+
 如果没有发现值得报告的问题：
 
-[]
+{"findings":[],"context_requests":[]}

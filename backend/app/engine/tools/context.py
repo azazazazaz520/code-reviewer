@@ -82,7 +82,7 @@ class TaskToolContext:
 
 @dataclass
 class TaskToolCache:
-    """同一审查任务内复用稳定 Tool 结果，包含错误和空结果。"""
+    """同一审查任务内复用稳定上下文读取结果，包含错误和空结果。"""
 
     values: dict[str, Any] = field(default_factory=dict)
     hits: int = 0
@@ -160,34 +160,15 @@ class TaskToolCache:
     def stats(self) -> dict[str, int]:
         with self._lock:
             return {
-                "tool_calls": self.calls,
-                "tool_requests": self.requests,
-                "cache_hits": self.hits,
-                "cache_misses": self.misses,
-                "read_file_requests": self.read_file_requests,
-                "read_file_cache_hits": self.read_file_cache_hits,
-                "read_file_cache_misses": self.read_file_cache_misses,
-                "read_file_errors": self.read_file_errors,
+                "context_reads": self.calls,
+                "context_read_requests": self.requests,
+                "context_cache_hits": self.hits,
+                "context_cache_misses": self.misses,
+                "context_read_errors": self.read_file_errors,
             }
 
 
-@dataclass
-class ToolCallBudget:
-    """单个 ReviewUnit 的 Tool 调用预算。"""
 
-    max_calls: int
-    calls: int = 0
-    exhausted: bool = False
-
-    def reserve(self) -> bool:
-        if self.max_calls > 0 and self.calls >= self.max_calls:
-            self.exhausted = True
-            return False
-        self.calls += 1
-        return True
-
-
-@lru_cache(maxsize=1024)
 def _build_changed_file_refs_cached(
     repo_root: str,
     revision: str,

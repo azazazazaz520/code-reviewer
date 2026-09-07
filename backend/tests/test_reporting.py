@@ -52,10 +52,10 @@ class DeriveReviewStatusTests(unittest.TestCase):
             "degraded",
         )
 
-    def test_tool_errors_and_input_truncation_are_degraded(self):
+    def test_legacy_tool_errors_do_not_degrade_but_input_truncation_does(self):
         self.assertEqual(
             derive_review_status([], {"tool_errors": 1}),
-            "degraded",
+            "complete",
         )
         self.assertEqual(
             derive_review_status([], {"truncated_inputs": 1}),

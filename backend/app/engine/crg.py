@@ -102,6 +102,28 @@ def try_crg_context(
                     )
                 )
 
+        # 影响图可能返回大量节点；只保留有限关联文件，避免上下文收集和每个
+        # Reviewer 的 Prompt 重复携带整棵影响图。变更文件不受此上限影响。
+        related_limit = max(
+            0,
+            32 - len(changed_normalized),
+        )
+        selected_related = []
+        selected_paths = set()
+        for ref in refs:
+            if ref.file_path in selected_paths:
+                continue
+            if len(selected_related) >= related_limit:
+                break
+            selected_paths.add(ref.file_path)
+            selected_related.append(ref.file_path)
+        refs = [ref for ref in refs if ref.file_path in selected_paths]
+        analysis_results = [
+            item
+            for item in analysis_results
+            if item.get("file") in changed_set or item.get("file") in selected_paths
+        ]
+
         state["analysis_results"] = list(state.get("analysis_results", [])) + analysis_results
         tool_context = state.get("tool_context")
         if tool_context is not None:
@@ -110,7 +132,7 @@ def try_crg_context(
             state["approved_context_refs"] = [
                 ref.as_dict() for ref in tool_context.approved_context_refs
             ]
-        related_set = {ref.file_path for ref in refs}
+        related_set = set(selected_related)
         impacted_files = [
             file_path for file_path in impacted_files
             if file_path in changed_set or file_path in related_set

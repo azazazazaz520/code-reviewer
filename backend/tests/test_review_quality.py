@@ -10,10 +10,9 @@ from app.config import settings
 from app.engine.finding_gate import filter_findings
 from app.engine.context import (
     ContextBudget,
+    REVIEW_CONTEXT_HARD_MAX_CHARS,
+    REVIEW_CONTEXT_HARD_MAX_FILES,
     REVIEW_DIFF_BATCH_CHARS,
-    build_stable_context_pack,
-    build_stable_file_context,
-    select_reviewer_context_batches,
     select_reviewer_context_with_metadata,
     split_diff_batches,
 )
@@ -22,10 +21,10 @@ from app.engine.errors import format_user_error
 from app.engine.llm import LLMProvider
 from app.engine.reviewers.base import BaseReviewer, ReviewerContext, ReviewerOutputError
 from app.engine.reviewers.style import StyleReviewer
-from app.engine.tools.context import ApprovedContextRef, TaskToolCache, TaskToolContext, ToolCallBudget
+from app.engine.tools.context import ApprovedContextRef, TaskToolCache, TaskToolContext
 from app.engine.scope import build_review_plan, classify_files
 from app.engine.validators.release import validate_release_manifest
-from app.engine.nodes import generate_report_node, reflection_node, run_reviews_node
+from app.engine.nodes import generate_report_node, run_reviews_node
 from app.engine.workflow import run_workflow
 
 
@@ -38,21 +37,38 @@ class ReviewQualityTests(unittest.TestCase):
             "模型服务余额不足，请补充余额或更换模型服务后重试。",
         )
 
-    def test_reviewer_input_truncation_is_explicit_and_counted(self):
-        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
+    def test_related_context_limit_does_not_count_as_critical_truncation(self):
+        with mock.patch.object(settings, "review_context_max_files", 1), mock.patch.object(
             settings, "review_context_max_chars", 100
         ):
             selection = select_reviewer_context_with_metadata(
-                {f"src/{index}.py": "x" * 10 for index in range(12)},
+                {"src/changed.py": "x" * 20, "src/related.py": "y" * 20},
+                ["src/changed.py"],
+                "style_reviewer",
+            )
+
+        self.assertEqual(selection.truncated_inputs, 0)
+        self.assertEqual(len(selection.context_limit_events), 1)
+
+    def test_context_budget_clamps_external_override(self):
+        source = {
+            f"src/{index}.py": "x" * 4_000
+            for index in range(REVIEW_CONTEXT_HARD_MAX_FILES + 5)
+        }
+        with mock.patch.object(settings, "review_context_max_files", 500), mock.patch.object(
+            settings, "review_context_max_chars", 2_000_000
+        ):
+            selection = select_reviewer_context_with_metadata(
+                source,
                 [],
                 "style_reviewer",
             )
-        self.assertEqual(len(selection.files), 10)
-        self.assertGreater(selection.truncated_inputs, 0)
 
-        context = ReviewerContext(diff="d" * (settings.review_unit_max_chars + 1))
-        StyleReviewer()._build_messages(context)
-        self.assertEqual(context.input_coverage["truncated_inputs"], 1)
+        self.assertLessEqual(len(selection.files), REVIEW_CONTEXT_HARD_MAX_FILES)
+        self.assertLessEqual(
+            sum(len(content) for content in selection.files.values()),
+            REVIEW_CONTEXT_HARD_MAX_CHARS,
+        )
 
     def test_reviewer_messages_keep_task_prefix_before_unit_diff(self):
         reviewer = StyleReviewer()
@@ -61,20 +77,18 @@ class ReviewQualityTests(unittest.TestCase):
             "task_changed_files": ["src/a.py", "src/b.py"],
             "shared_file_context": {"src/a.py": "value = 1\n"},
         }
-        first = reviewer._build_messages(
-            ReviewerContext(
-                **common,
-                changed_files=["src/a.py"],
-                diff="+value = 2\n",
-            )
+        first_context = ReviewerContext(
+            **common,
+            changed_files=["src/a.py"],
+            diff="+value = 2\n",
         )
-        second = reviewer._build_messages(
-            ReviewerContext(
-                **common,
-                changed_files=["src/a.py"],
-                diff="+value = 3\n",
-            )
+        second_context = ReviewerContext(
+            **common,
+            changed_files=["src/a.py"],
+            diff="+value = 3\n",
         )
+        first = reviewer._build_messages(first_context)
+        second = reviewer._build_messages(second_context)
 
         first_prefix = first[1]["content"].split("## 当前审查单元", 1)[0]
         second_prefix = second[1]["content"].split("## 当前审查单元", 1)[0]
@@ -83,82 +97,47 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertIn("src/a.py", first_prefix)
         self.assertNotIn("+value = 2", first_prefix)
         self.assertNotIn("+value = 3", second_prefix)
-
-    def test_stable_file_context_is_bounded(self):
-        content = "x" * (settings.review_context_max_chars + 1)
-
-        result = build_stable_file_context(
-            {"src/app.py": content},
-            "src/app.py",
-            "style_reviewer",
-        )
-
         self.assertEqual(
-            len(result["src/app.py"]),
-            settings.review_context_max_chars,
+            first_context.input_coverage["stable_prefix_hash"],
+            second_context.input_coverage["stable_prefix_hash"],
         )
-        self.assertIn("共享上下文截断", result["src/app.py"])
-
-    def test_stable_context_pack_is_same_for_different_review_units(self):
-        file_context = {
-            "src/b.py": "b" * 100,
-            "src/a.py": "a" * 100,
-        }
-
-        first = build_stable_context_pack(
-            file_context,
-            ["src/a.py", "src/b.py"],
-            "style_reviewer",
-        )
-        second = build_stable_context_pack(
-            file_context,
-            ["src/b.py", "src/a.py"],
-            "style_reviewer",
+        self.assertNotEqual(
+            first_context.input_coverage["dynamic_suffix_hash"],
+            second_context.input_coverage["dynamic_suffix_hash"],
         )
 
-        self.assertEqual(first, second)
-        self.assertEqual(list(first), ["src/a.py", "src/b.py"])
+    def test_reviewer_prompt_bounds_json_output_without_changing_token_budget(self):
+        messages = StyleReviewer()._build_messages(
+            ReviewerContext(
+                diff="@@ -1,1 +1,1 @@\n-value = 0\n+value = 1\n",
+                changed_files=["src/app.py"],
+            )
+        )
+
+        system_prompt = messages[0]["content"]
+        self.assertIn("每个审查批次最多返回 5 条最重要的 Finding", system_prompt)
+        self.assertIn("title 不超过 80 个字符", system_prompt)
+        self.assertIn("不能为了容纳更多条目而省略 JSON 的闭合结构", system_prompt)
+        self.assertIn('根节点必须包含 findings 和 context_requests 数组', system_prompt)
+        self.assertNotIn("严格返回 JSON 数组", system_prompt)
 
     def test_reviewer_records_each_provider_usage_response(self):
         class UsageReviewer(BaseReviewer):
             name = "usage_reviewer"
             system_prompt = "test"
-            required_tools = ["ReadFile"]
-
-            def review(self, context):
-                return self._parse_findings(self._call_llm(context))
 
         class FakeLLM:
             def chat(self, _messages, **_kwargs):
-                return {"content": "[]", "usage": {}}
-
-            def chat_with_tools(self, _messages, _tools, _handlers, response_meta_hook=None, **_kwargs):
-                if response_meta_hook:
-                    response_meta_hook(
-                        {
-                            "stage": "tool_selection",
-                            "usage": {
-                                "prompt_tokens": 100,
-                                "completion_tokens": 8,
-                                "total_tokens": 108,
-                                "prompt_cache_hit_tokens": 64,
-                                "prompt_cache_miss_tokens": 36,
-                            },
-                        }
-                    )
-                    response_meta_hook(
-                        {
-                            "stage": "finalize_json",
-                            "usage": {
-                                "prompt_tokens": 120,
-                                "completion_tokens": 6,
-                                "total_tokens": 126,
-                                "prompt_cache_hit_tokens": 96,
-                                "prompt_cache_miss_tokens": 24,
-                            },
-                        }
-                    )
-                return "[]"
+                return {
+                    "content": '{"findings":[],"context_requests":[]}',
+                    "usage": {
+                        "prompt_tokens": 100,
+                        "completion_tokens": 8,
+                        "total_tokens": 108,
+                        "prompt_cache_hit_tokens": 64,
+                        "prompt_cache_miss_tokens": 36,
+                    },
+                }
 
         reviewer = UsageReviewer()
         reviewer._llm = FakeLLM()
@@ -171,13 +150,13 @@ class ReviewQualityTests(unittest.TestCase):
         )
 
         self.assertEqual(reviewer.review(context), [])
-        self.assertEqual(context.input_coverage["provider_requests"], 2)
-        self.assertEqual(context.input_coverage["llm_prompt_tokens"], 220)
-        self.assertEqual(context.input_coverage["llm_prompt_cache_hit_tokens"], 160)
-        self.assertEqual(context.input_coverage["llm_prompt_cache_miss_tokens"], 60)
+        self.assertEqual(context.input_coverage["provider_requests"], 1)
+        self.assertEqual(context.input_coverage["llm_prompt_tokens"], 100)
+        self.assertEqual(context.input_coverage["llm_prompt_cache_hit_tokens"], 64)
+        self.assertEqual(context.input_coverage["llm_prompt_cache_miss_tokens"], 36)
         self.assertEqual(
             [event["stage"] for event in context.input_coverage["llm_usage_events"]],
-            ["tool_selection", "finalize_json"],
+            ["review"],
         )
         self.assertEqual(
             context.input_coverage["llm_usage_events"][0]["task_id"],
@@ -188,20 +167,51 @@ class ReviewQualityTests(unittest.TestCase):
         )
         self.assertEqual(
             context.input_coverage["llm_usage_events"][0]["session_scope"],
-            "review_unit",
+            "review_batch",
         )
         self.assertTrue(
             context.input_coverage["llm_usage_events"][0]["session_rebuilt"]
         )
-        self.assertFalse(
-            context.input_coverage["llm_usage_events"][1]["first_provider_request"]
-        )
-        self.assertEqual(
-            context.input_coverage["llm_usage_events"][1]["provider_request_index"],
-            2,
-        )
-        self.assertEqual(len(logs), 2)
+        self.assertEqual(len(logs), 1)
         self.assertNotIn("value =", logs[0]["message"])
+
+    def test_complete_json_is_not_repaired_when_provider_reports_length(self):
+        class CompleteJsonLengthLLM:
+            def __init__(self):
+                self.calls = 0
+                self.kwargs = []
+
+            def chat(self, _messages, **kwargs):
+                self.calls += 1
+                self.kwargs.append(kwargs)
+                return {
+                    "content": (
+                        '{"findings":[{"severity":"low","file":"src/app.py",'
+                        '"line":1,"title":"完整结果","reason":"有证据",'
+                        '"suggestion":"修复","evidence":"value = 1",'
+                        '"impact":"maintainability"}],"context_requests":[]}'
+                    ),
+                    "finish_reason": "length",
+                }
+
+        reviewer = StyleReviewer()
+        llm = CompleteJsonLengthLLM()
+        reviewer._llm = llm
+        metadata_updates = []
+        context = ReviewerContext(
+            diff="@@ -1,1 +1,1 @@\n-value = 0\n+value = 1\n",
+            changed_files=["src/app.py"],
+            output_metadata_hook=lambda stage, metadata: metadata_updates.append(
+                (stage, metadata)
+            ),
+        )
+
+        findings = reviewer.review(context)
+
+        self.assertEqual(llm.calls, 1)
+        self.assertEqual(llm.kwargs[0]["thinking"], "disabled")
+        self.assertEqual(findings[0]["title"], "完整结果")
+        self.assertIn(("review", {"truncated": False}), metadata_updates)
 
     def test_reviewer_messages_hide_snapshot_absolute_root(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -222,23 +232,38 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertNotIn(temp_dir, rendered)
         self.assertIn("src/app.py", rendered)
 
-    def test_reviewer_context_batches_preserve_all_content(self):
-        source = {
-            "src/a.py": "a" * 7000,
-            "src/b.py": "b" * 7000,
-        }
+    def test_context_request_past_file_end_does_not_create_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target = root / "src" / "settings.py"
+            target.parent.mkdir()
+            target.write_text("one\ntwo\nthree\n", encoding="utf-8")
+            context = ReviewerContext(
+                tool_context=TaskToolContext(
+                    repo_root=temp_dir,
+                    revision="rev-1",
+                    approved_context_refs=(
+                        ApprovedContextRef("src/settings.py", 1, 200),
+                    ),
+                )
+            )
 
-        batches = select_reviewer_context_batches(source, [], "style_reviewer")
+            rendered = BaseReviewer()._read_requested_context(
+                context,
+                [
+                    {
+                        "file": "src/settings.py",
+                        "start_line": 1,
+                        "end_line": 200,
+                        "reason": "验证文件末尾边界",
+                    }
+                ],
+            )
 
-        self.assertEqual(
-            "".join(batch.files.get("src/a.py", "") for batch in batches),
-            source["src/a.py"],
-        )
-        self.assertEqual(
-            "".join(batch.files.get("src/b.py", "") for batch in batches),
-            source["src/b.py"],
-        )
-        self.assertTrue(all(batch.truncated_inputs == 0 for batch in batches))
+        self.assertIn("3|three", rendered)
+        self.assertEqual(context.input_coverage["context_reads"], 1)
+        self.assertEqual(context.input_coverage["context_request_failures"], 0)
+        self.assertEqual(context.input_coverage["context_request_failure_events"], [])
 
     def test_diff_batches_preserve_all_content(self):
         diff = "@@ -1,1 +1,1 @@\n" + ("+value\n" * 2000)
@@ -289,103 +314,6 @@ class ReviewQualityTests(unittest.TestCase):
                 "",
             )
 
-    def test_reviewer_tools_are_bound_to_task_snapshot_root(self):
-        from app.engine.tools.registry import TOOL_REGISTRY
-
-        observed = {}
-
-        def fake_hub_tool(**kwargs):
-            observed.update(kwargs)
-            return "ok"
-
-        context = ReviewerContext(
-            repo_root="E:/source-root",
-            tool_context=TaskToolContext(
-                repo_root="E:/snapshot-root",
-                revision="rev-1",
-            ),
-        )
-        with mock.patch.dict(TOOL_REGISTRY["GetHubNodes"], {"handler": fake_hub_tool}):
-            handlers = StyleReviewer()._build_tool_handlers(context)
-            handlers["GetHubNodes"](repo_root="E:/attacker-path", top_n=1)
-
-        self.assertEqual(observed["repo_root"], "E:/snapshot-root")
-
-    def test_tool_schema_resolves_postponed_numeric_annotations(self):
-        from app.engine.tools.registry import (
-            TOOL_REGISTRY,
-            ToolArgumentError,
-            coerce_tool_arguments,
-        )
-
-        self.assertEqual(
-            TOOL_REGISTRY["ReadFile"]["schema"]["parameters"]["properties"]["start_line"],
-            {"type": "integer", "description": "start_line", "minimum": 1},
-        )
-        self.assertEqual(
-            TOOL_REGISTRY["ReadFile"]["schema"]["parameters"]["properties"]["max_lines"],
-            {
-                "type": "integer",
-                "description": "max_lines",
-                "minimum": 1,
-                "maximum": 200,
-            },
-        )
-        for tool_name in ("GetHubNodes", "GetBridgeNodes"):
-            self.assertEqual(
-                TOOL_REGISTRY[tool_name]["schema"]["parameters"]["properties"]["top_n"]["type"],
-                "integer",
-            )
-
-        self.assertEqual(
-            TOOL_REGISTRY["GetImpactRadius"]["schema"]["parameters"]["properties"]["max_depth"]["type"],
-            "integer",
-        )
-        self.assertEqual(
-            coerce_tool_arguments(
-                "ReadFile",
-                {"file_path": "src/app.py", "start_line": "2", "max_lines": "10"},
-            )["max_lines"],
-            10,
-        )
-        with self.assertRaises(ToolArgumentError):
-            coerce_tool_arguments(
-                "ReadFile",
-                {"file_path": "src/app.py", "start_line": "1.5", "max_lines": 1},
-            )
-        with self.assertRaises(ToolArgumentError):
-            coerce_tool_arguments(
-                "ReadFile",
-                {"file_path": "src/app.py", "start_line": 1, "max_lines": 201},
-            )
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "src" / "app.py"
-            path.parent.mkdir()
-            path.write_text("value = 1\nvalue = 2\n", encoding="utf-8")
-            context = ReviewerContext(
-                tool_context=TaskToolContext(
-                    repo_root=temp_dir,
-                    revision="rev-1",
-                    approved_context_refs=(ApprovedContextRef("src/app.py", 1, 2),),
-                ),
-            )
-            result = StyleReviewer()._build_tool_handlers(context)["ReadFile"](
-                file_path="src/app.py",
-                start_line="1",
-                max_lines="1",
-            )
-            self.assertIn("value = 1", result)
-
-            invalid = StyleReviewer()._build_tool_handlers(context)["ReadFile"](
-                file_path="src/app.py",
-                start_line=1,
-                max_lines="1.5",
-            )
-            self.assertIn("invalid tool arguments", invalid)
-            self.assertEqual(context.input_coverage["tool_errors"], 0)
-            self.assertEqual(context.input_coverage["model_decision_errors"], 1)
-
     def test_finding_gate_caches_line_count_within_one_filter_pass(self):
         findings = [
             {
@@ -429,83 +357,26 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(len(accepted), 2)
         line_count.assert_called_once()
 
-    def test_repeated_same_model_read_decision_is_counted_once(self):
-        context = ReviewerContext(
-            tool_context=TaskToolContext(
-                repo_root="E:/snapshot-root",
-                revision="rev-1",
-            ),
-        )
-
-        handlers = StyleReviewer()._build_tool_handlers(context)
-        handlers["ReadFile"](file_path="missing.py", start_line=1, max_lines=1)
-        handlers["ReadFile"](file_path="missing.py", start_line=1, max_lines=1)
-
-        self.assertEqual(context.input_coverage["tool_errors"], 0)
-        self.assertEqual(context.input_coverage["model_decision_errors"], 1)
-        self.assertEqual(len(context.input_coverage["model_decision_events"]), 1)
-
-    def test_read_file_accepts_model_max_line_alias(self):
-        context = ReviewerContext(
-            tool_context=TaskToolContext(
-                repo_root="E:/snapshot-root",
-                revision="rev-1",
-            ),
-        )
-
-        handlers = StyleReviewer()._build_tool_handlers(context)
-        result = handlers["ReadFile"](
-            file_path="missing.py",
-            start_line=1,
-            max_line=1,
-        )
-
-        self.assertTrue(result.startswith("Error:"))
-        self.assertEqual(context.input_coverage["tool_errors"], 0)
-        self.assertEqual(context.input_coverage["model_decision_errors"], 1)
-
-    def test_read_file_clamps_model_page_request_without_tool_error(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "app.py"
-            path.write_text("value = 1\nvalue = 2\n", encoding="utf-8")
-            context = ReviewerContext(
-                tool_context=TaskToolContext(
-                    repo_root=temp_dir,
-                    revision="rev-1",
-                    approved_context_refs=(ApprovedContextRef("app.py", 1, 2),),
-                ),
-            )
-
-            result = StyleReviewer()._build_tool_handlers(context)["ReadFile"](
-                file_path="app.py",
-                start_line=1,
-                max_lines=213,
-            )
-
-        self.assertIn("value = 2", result)
-        self.assertEqual(context.input_coverage["tool_errors"], 0)
-        self.assertEqual(context.input_coverage.get("model_decision_errors", 0), 0)
-
-    def test_reviewer_tool_metrics_count_requests_and_cache_hits(self):
-        class ToolReviewer(BaseReviewer):
+    def test_reviewer_performs_at_most_one_context_supplement(self):
+        class ContextReviewer(BaseReviewer):
             name = "test_reviewer"
-            required_tools = ["ReadFile"]
             system_prompt = "test"
 
-            def review(self, context):
-                return self._parse_findings_with_repair(self._call_llm(context), context)
-
         class FakeLLM:
-            def chat_with_tools(self, _messages, _tools, handlers, response_meta_hook=None, **_kwargs):
-                handlers["ReadFile"](file_path="src/app.py", start_line=1, max_lines=1)
-                handlers["ReadFile"](file_path="src/app.py", start_line=1, max_line=1)
-                if response_meta_hook:
-                    response_meta_hook({
-                        "tool_calls": 2,
-                        "tool_rounds": 1,
-                        "tool_budget_exhausted": False,
-                    })
-                return "[]"
+            def __init__(self):
+                self.calls = []
+
+            def chat(self, _messages, **kwargs):
+                self.calls.append(kwargs)
+                if len(self.calls) == 1:
+                    content = (
+                        '{"findings":[],"context_requests":['
+                        '{"file":"src/app.py","start_line":1,'
+                        '"end_line":1,"reason":"确认赋值"}]}'
+                    )
+                else:
+                    content = '{"findings":[],"context_requests":[]}'
+                return {"content": content, "usage": {}}
 
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "src" / "app.py"
@@ -518,18 +389,18 @@ class ReviewQualityTests(unittest.TestCase):
                     approved_context_refs=(ApprovedContextRef("src/app.py", 1, 1),),
                 ),
                 tool_cache=TaskToolCache(),
-                tool_budget=ToolCallBudget(4),
             )
-            reviewer = ToolReviewer()
+            reviewer = ContextReviewer()
             reviewer._llm = FakeLLM()
 
             self.assertEqual(reviewer.review(context), [])
 
-        self.assertEqual(context.input_coverage["tool_requests"], 2)
-        self.assertEqual(context.input_coverage["tool_calls"], 2)
-        self.assertEqual(context.input_coverage["tool_cache_hits"], 1)
-        self.assertEqual(context.input_coverage["tool_cache_misses"], 1)
-        self.assertFalse(context.input_coverage["tool_budget_exhausted"])
+        self.assertEqual(len(reviewer._llm.calls), 2)
+        self.assertEqual(context.input_coverage["context_requests"], 1)
+        self.assertEqual(context.input_coverage["context_reads"], 1)
+        self.assertEqual(context.input_coverage["context_cache_hits"], 0)
+        self.assertEqual(reviewer._llm.calls[0]["thinking"], "disabled")
+        self.assertEqual(reviewer._llm.calls[1]["thinking"], "disabled")
 
     def test_reviewer_balance_error_is_normalised_in_report_state(self):
         class BalanceReviewer:
@@ -677,6 +548,40 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(len(accepted), 1)
         self.assertEqual(accepted[0]["evidence_type"], "reviewer_context")
+
+    def test_finding_gate_strict_mode_keeps_only_current_diff_lines(self):
+        diff = """diff --git a/src/app.py b/src/app.py
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,2 +1,3 @@
++value = 1
+ value += 1
+"""
+        base = {
+            "severity": "low",
+            "file": "src/app.py",
+            "title": "问题",
+            "reason": "当前变更会触发错误。",
+            "suggestion": "修复当前变更。",
+            "evidence": "value = 1",
+            "impact": "behavior",
+        }
+        findings = [
+            {**base, "line": 1},
+            {**base, "line": 2, "title": "上下文问题", "evidence": "value += 1"},
+        ]
+        reasons = {}
+
+        accepted = filter_findings(
+            findings,
+            ["src/app.py"],
+            diff,
+            require_changed_line=True,
+            rejection_reasons=reasons,
+        )
+
+        self.assertEqual([finding["line"] for finding in accepted], [1])
+        self.assertEqual(reasons["outside_current_diff"], 1)
 
     def test_finding_gate_validates_snapshot_file_and_line(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1029,8 +934,8 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(report["review_status"], "complete")
         self.assertEqual(report["quality"]["coverage_status"], "complete")
-        self.assertEqual(report["quality"]["database_status"], "ready")
-        self.assertEqual(report["code_database"]["database_revision"], revision)
+        self.assertEqual(report["quality"]["database_status"], "skipped")
+        self.assertEqual(report["code_database"], {})
         self.assertEqual(len(report["findings"]), 1)
 
     def test_invalid_reviewer_output_is_visible_without_blocking_report(self):
@@ -1064,7 +969,7 @@ class ReviewQualityTests(unittest.TestCase):
             reviewers.REVIEWER_REGISTRY.clear()
             reviewers.REVIEWER_REGISTRY.update(original_registry)
 
-        report_state = generate_report_node(reflection_node(state))
+        report_state = generate_report_node(state)
 
         self.assertEqual(report_state["findings"], [])
         self.assertTrue(report_state["report"])
@@ -1138,44 +1043,58 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(report_state["report"]["review_status"], "complete")
         self.assertEqual(report_state["report"]["summary"], "本次审查发现 0 个问题")
 
-    def test_tool_call_review_always_closes_with_structured_json(self):
-        provider = object.__new__(LLMProvider)
-        calls = []
-        responses = iter(
-            [
-                {
-                    "content": "分析过程很长，但这不是最终结果。",
-                    "tool_calls": [],
-                    "finish_reason": "stop",
+    def test_dynamic_reviewer_prompt_keeps_diff_but_not_repeated_file_context(self):
+        reviewer = StyleReviewer()
+        with mock.patch.object(settings, "review_context_max_chars", 0):
+            context = ReviewerContext(
+                diff="@@ -1,1 +1,2 @@\n+value = 1",
+                changed_files=["src/app.py"],
+                file_context={"src/app.py": "1|value = 1\n2|value = 2"},
+            )
+            messages = reviewer._build_messages(context)
+
+        self.assertIn("@@ -1,1 +1,2 @@", messages[1]["content"])
+        self.assertNotIn("## 当前文件上下文", messages[1]["content"])
+        self.assertEqual(context.input_coverage.get("truncated_inputs", 0), 0)
+        self.assertGreater(context.input_coverage["context_limited_inputs"], 0)
+
+    def test_dynamic_context_budget_prioritises_primary_file(self):
+        reviewer = StyleReviewer()
+        with mock.patch.object(settings, "review_context_max_chars", 20):
+            context = ReviewerContext(
+                diff="+value = 1",
+                changed_files=["src/z.py"],
+                file_context={
+                    "src/a.py": "1|related = True",
+                    "src/z.py": "1|value = 1",
                 },
-                {
-                    "content": '{"findings":[]}',
-                    "tool_calls": [],
-                    "finish_reason": "stop",
+            )
+            messages = reviewer._build_messages(context)
+
+        self.assertIn("### src/z.py", messages[1]["content"])
+        self.assertLess(
+            messages[1]["content"].index("### src/z.py"),
+            messages[1]["content"].index("### src/a.py"),
+        )
+        self.assertGreater(context.input_coverage["context_limited_inputs"], 0)
+
+    def test_reviewer_prompt_declares_strict_current_diff_scope(self):
+        messages = StyleReviewer()._build_messages(
+            ReviewerContext(
+                diff="diff --git a/src/app.py b/src/app.py\n+value = 1",
+                changed_files=["src/app.py"],
+                review_scope={
+                    "target": "提交 abc123 的当前改动",
+                    "revision": "abc123",
+                    "base_revision": "000000",
                 },
-            ]
-        )
-
-        def fake_chat(messages, **kwargs):
-            calls.append({"messages": messages, "kwargs": kwargs})
-            return next(responses)
-
-        provider.chat = fake_chat
-        result = provider.chat_with_tools(
-            [{"role": "user", "content": "review"}],
-            tools=[],
-            tool_handlers={},
-        )
-
-        self.assertEqual(result, '{"findings":[]}')
-        self.assertEqual(calls[1]["kwargs"]["response_format"], {"type": "json_object"})
-        self.assertTrue(
-            any(
-                "分析过程很长" in message.get("content", "")
-                for message in calls[1]["messages"]
-                if message.get("role") == "assistant"
             )
         )
+
+        content = messages[1]["content"]
+        self.assertIn("审查范围（严格）", content)
+        self.assertIn("提交 abc123 的当前改动", content)
+        self.assertIn("Finding 必须落在当前 Diff 的变更文件与新增/修改行", content)
 
     def test_llm_provider_exposes_deepseek_prompt_cache_usage(self):
         provider = object.__new__(LLMProvider)
@@ -1207,7 +1126,7 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertEqual(result["usage"]["prompt_cache_hit_tokens"], 160)
         self.assertEqual(result["usage"]["prompt_cache_miss_tokens"], 60)
 
-    def test_llm_provider_preserves_reasoning_and_raw_tool_arguments(self):
+    def test_llm_provider_sends_explicit_deepseek_thinking_mode(self):
         provider = object.__new__(LLMProvider)
         provider.model = "deepseek-v4-flash"
         provider.base_url = "https://api.deepseek.com"
@@ -1216,20 +1135,8 @@ class ReviewQualityTests(unittest.TestCase):
         response = SimpleNamespace(
             choices=[
                 SimpleNamespace(
-                    message=SimpleNamespace(
-                        content="",
-                        reasoning_content="先检查变更文件。",
-                        tool_calls=[
-                            SimpleNamespace(
-                                id="call-1",
-                                function=SimpleNamespace(
-                                    name="ReadFile",
-                                    arguments='{"file_path":"src/app.py", "max_lines":10}',
-                                ),
-                            )
-                        ],
-                    ),
-                    finish_reason="tool_calls",
+                    message=SimpleNamespace(content='{"findings":[]}', tool_calls=[]),
+                    finish_reason="stop",
                 )
             ],
             usage=SimpleNamespace(),
@@ -1237,62 +1144,16 @@ class ReviewQualityTests(unittest.TestCase):
         provider.client = mock.Mock()
         provider.client.chat.completions.create.return_value = response
 
-        result = provider.chat([{"role": "user", "content": "review"}])
-
-        self.assertEqual(result["reasoning_content"], "先检查变更文件。")
-        self.assertEqual(
-            result["tool_calls"][0]["arguments_raw"],
-            '{"file_path":"src/app.py", "max_lines":10}',
-        )
-
-    def test_tool_session_replays_complete_deepseek_assistant_message(self):
-        provider = object.__new__(LLMProvider)
-        provider.model = "deepseek-v4-flash"
-        provider.base_url = "https://api.deepseek.com"
-        calls = []
-        responses = iter(
-            [
-                {
-                    "content": "",
-                    "reasoning_content": "先读取目标文件。",
-                    "tool_calls": [
-                        {
-                            "id": "call-1",
-                            "name": "ReadFile",
-                            "arguments": {"file_path": "src/app.py"},
-                            "arguments_raw": '{"file_path":"src/app.py"}',
-                        }
-                    ],
-                },
-                {
-                    "content": '{"findings":[]}',
-                    "reasoning_content": "已完成审查。",
-                    "tool_calls": [],
-                },
-            ]
-        )
-
-        def fake_chat(messages, **kwargs):
-            calls.append(messages)
-            return next(responses)
-
-        provider.chat = fake_chat
-        result = provider.chat_with_tools(
+        provider.chat(
             [{"role": "user", "content": "review"}],
-            tools=[],
-            tool_handlers={"ReadFile": lambda **_: "file content"},
-            max_rounds=1,
+            response_format={"type": "json_object"},
+            max_tokens=23,
+            thinking="disabled",
         )
 
-        self.assertEqual(result, '{"findings":[]}')
-        replayed = calls[1][1]
-        self.assertEqual(replayed["role"], "assistant")
-        self.assertEqual(replayed["content"], "")
-        self.assertEqual(replayed["reasoning_content"], "先读取目标文件。")
-        self.assertEqual(
-            replayed["tool_calls"][0]["function"]["arguments"],
-            '{"file_path":"src/app.py"}',
-        )
+        kwargs = provider.client.chat.completions.create.call_args.kwargs
+        self.assertEqual(kwargs["max_tokens"], 23)
+        self.assertEqual(kwargs["extra_body"], {"thinking": {"type": "disabled"}})
 
     def test_reviewer_session_rebuilds_without_previous_unit_history(self):
         reviewer = StyleReviewer()
@@ -1315,24 +1176,6 @@ class ReviewQualityTests(unittest.TestCase):
         self.assertIn("new diff", messages[1]["content"])
         self.assertNotIn("stale model output", json.dumps(messages, ensure_ascii=False))
 
-    def test_stable_context_pack_can_include_complete_review_context(self):
-        file_context = {
-            f"src/{index}.py": "x" * 100
-            for index in range(20)
-        }
-
-        with mock.patch.object(settings, "review_context_max_files", 100), mock.patch.object(
-            settings, "review_context_max_chars", 10_000
-        ):
-            result = build_stable_context_pack(
-                file_context,
-                list(file_context),
-                "style_reviewer",
-            )
-
-        self.assertEqual(len(result), len(file_context))
-        self.assertEqual(sum(map(len, result.values())), 2_000)
-
     def test_reviewer_does_not_repeat_file_context_already_in_stable_pack(self):
         reviewer = StyleReviewer()
         context = ReviewerContext(
@@ -1345,85 +1188,21 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertNotIn("## 当前文件上下文", messages[1]["content"])
 
-    def test_tool_call_review_recovers_from_empty_forced_final_response(self):
-        provider = object.__new__(LLMProvider)
-        responses = iter(
-            [
-                {
-                    "content": None,
-                    "tool_calls": [
-                        {
-                            "id": "call-1",
-                            "name": "ReadFile",
-                            "arguments": {"file_path": "src/app.py"},
-                        }
-                    ],
-                },
-                {"content": None, "tool_calls": []},
-                {"content": "[]", "tool_calls": []},
-            ]
-        )
-
-        def fake_chat(_messages, tools=None, **_kwargs):
-            return next(responses)
-
-        provider.chat = fake_chat
-        result = provider.chat_with_tools(
-            [{"role": "user", "content": "review"}],
-            tools=[],
-            tool_handlers={"ReadFile": lambda **_: "content"},
-            max_rounds=1,
-        )
-
-        self.assertEqual(result, "[]")
-
-    def test_tool_call_review_stops_at_tool_budget(self):
-        provider = object.__new__(LLMProvider)
-        calls = []
-        tool_calls = [
-            {"id": "call-1", "name": "ReadFile", "arguments": {"file_path": "a.py"}},
-            {"id": "call-2", "name": "ReadFile", "arguments": {"file_path": "b.py"}},
-        ]
-        responses = iter(
-            [
-                {"content": None, "tool_calls": tool_calls},
-                {"content": '{"findings":[]}', "tool_calls": []},
-            ]
-        )
-
-        def fake_chat(messages, **kwargs):
-            calls.append((messages, kwargs))
-            return next(responses)
-
-        provider.chat = fake_chat
-        loaded = []
-        result = provider.chat_with_tools(
-            [{"role": "user", "content": "review"}],
-            tools=[{"name": "ReadFile"}],
-            tool_handlers={"ReadFile": lambda **kwargs: loaded.append(kwargs) or "content"},
-            max_rounds=1,
-            max_tool_calls=1,
-        )
-
-        self.assertEqual(result, '{"findings":[]}')
-        self.assertEqual(len(loaded), 1)
-        self.assertTrue(
-            any(
-                "Tool 调用预算已用尽" in message.get("content", "")
-                for message in calls[-1][0]
-                if message.get("role") == "user"
-            )
-        )
-
     def test_reviewer_repairs_non_json_model_output_before_failing(self):
         class RepairingLLM:
             def __init__(self):
                 self.repair_messages = []
+                self.calls = 0
+                self.kwargs = []
 
-            def chat_with_tools(self, *_args, **_kwargs):
-                return "审查结果：```json\n[{'severity': 'low'}]\n```"
-
-            def chat(self, messages, **_kwargs):
+            def chat(self, messages, **kwargs):
+                self.calls += 1
+                self.kwargs.append(kwargs)
+                if self.calls == 1:
+                    return {
+                        "content": "审查结果：```json\n[{'severity': 'low'}]\n```",
+                        "finish_reason": "stop",
+                    }
                 self.repair_messages.append(messages)
                 return {
                     "content": (
@@ -1441,13 +1220,32 @@ class ReviewQualityTests(unittest.TestCase):
 
         self.assertEqual(findings[0]["file"], "src/app.py")
         self.assertEqual(len(reviewer._llm.repair_messages), 1)
+        # JSON 修复只整理原始输出，并显式关闭思考模式。
+        self.assertEqual(reviewer._llm.calls, 2)
+        self.assertEqual(
+            reviewer._llm.kwargs[1]["thinking"],
+            "disabled",
+        )
+        self.assertEqual(
+            reviewer._llm.kwargs[1]["max_tokens"],
+            settings.llm_json_repair_max_tokens,
+        )
+        repair_prompt = "\n".join(
+            message["content"]
+            for message in reviewer._llm.repair_messages[0]
+        )
+        self.assertIn("只保留原始输出中已经完整的 Finding", repair_prompt)
+        self.assertIn("最多保留 5 条 Finding", repair_prompt)
 
     def test_reviewer_does_not_turn_unverifiable_output_into_clean_review(self):
         class EmptyRepairLLM:
-            def chat_with_tools(self, *_args, **_kwargs):
-                return "模型分析被截断，无法确认结果"
+            def __init__(self):
+                self.calls = 0
 
             def chat(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {"content": "模型分析被截断，无法确认结果"}
                 return {"content": '{"findings":[]}', "tool_calls": []}
 
         reviewer = StyleReviewer()
@@ -1458,13 +1256,16 @@ class ReviewQualityTests(unittest.TestCase):
 
     def test_truncated_reviewer_output_is_not_treated_as_clean_review(self):
         class TruncatedLLM:
-            def chat_with_tools(self, *args, **kwargs):
-                callback = kwargs.get("response_meta_hook")
-                if callback:
-                    callback({"finish_reason": "length"})
-                return 'analysis: `"".split("-")` returns [""]。Actually,'
+            def __init__(self):
+                self.calls = 0
 
             def chat(self, _messages, **_kwargs):
+                self.calls += 1
+                if self.calls == 1:
+                    return {
+                        "content": 'analysis: `"".split("-")` returns [""]。Actually,',
+                        "finish_reason": "length",
+                    }
                 return {
                     "content": '{"findings":[]}',
                     "tool_calls": [],
@@ -1474,7 +1275,10 @@ class ReviewQualityTests(unittest.TestCase):
         reviewer = StyleReviewer()
         reviewer._llm = TruncatedLLM()
 
-        with self.assertRaises(ReviewerOutputError):
+        with self.assertRaisesRegex(
+            ReviewerOutputError,
+            "output was truncated before complete review JSON",
+        ):
             reviewer.review(ReviewerContext(diff="diff"))
 
     def test_truncated_reviewer_trace_is_degraded(self):
@@ -1511,7 +1315,7 @@ class ReviewQualityTests(unittest.TestCase):
             reviewers.REVIEWER_REGISTRY.clear()
             reviewers.REVIEWER_REGISTRY.update(original_registry)
 
-        report_state = generate_report_node(reflection_node(state))
+        report_state = generate_report_node(state)
 
         attempt = state["reviewer_outputs"]["style_reviewer"]["attempts"][0]
         self.assertEqual(attempt["finish_reason"], "length")
@@ -1521,8 +1325,11 @@ class ReviewQualityTests(unittest.TestCase):
 
     def test_reviewer_captures_primary_output_for_report_trace(self):
         class TracedLLM:
-            def chat_with_tools(self, *_args, **_kwargs):
-                return '{"findings":[]}'
+            def chat(self, *_args, **_kwargs):
+                return {
+                    "content": '{"findings":[],"context_requests":[]}',
+                    "finish_reason": "stop",
+                }
 
         outputs = []
         reviewer = StyleReviewer()
@@ -1535,7 +1342,10 @@ class ReviewQualityTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(outputs, [("primary", '{"findings":[]}')])
+        self.assertEqual(
+            outputs,
+            [("review", '{"findings":[],"context_requests":[]}')],
+        )
 
     def test_report_preserves_reviewer_output_trace(self):
         state = {

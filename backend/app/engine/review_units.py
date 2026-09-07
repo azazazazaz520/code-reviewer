@@ -96,54 +96,6 @@ def _unit_id(revision: str, hunk_ids: list[str], suffix: str = "") -> str:
     return "unit-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:20]
 
 
-def _split_large_hunk(hunk: DiffHunk, revision: str) -> list[dict]:
-    max_chars = max(1, settings.review_unit_max_chars)
-    if len(hunk.text) <= max_chars:
-        return [{
-            "unit_id": _unit_id(revision, [hunk.hunk_id]),
-            "primary_file": hunk.file_path,
-            "files": [hunk.file_path],
-            "diff": hunk.text,
-            "hunk_ids": [hunk.hunk_id],
-            "start_line": hunk.start_line,
-            "end_line": hunk.end_line,
-        }]
-
-    lines = hunk.text.splitlines(keepends=True)
-    units: list[dict] = []
-    current: list[str] = []
-    current_chars = 0
-    part = 0
-    for line in lines:
-        if current and current_chars + len(line) > max_chars:
-            part += 1
-            units.append({
-                "unit_id": _unit_id(revision, [hunk.hunk_id], str(part)),
-                "primary_file": hunk.file_path,
-                "files": [hunk.file_path],
-                "diff": "".join(current),
-                "hunk_ids": [f"{hunk.hunk_id}:part-{part}"],
-                "start_line": hunk.start_line,
-                "end_line": hunk.end_line,
-            })
-            current = []
-            current_chars = 0
-        current.append(line)
-        current_chars += len(line)
-    if current:
-        part += 1
-        units.append({
-            "unit_id": _unit_id(revision, [hunk.hunk_id], str(part)),
-            "primary_file": hunk.file_path,
-            "files": [hunk.file_path],
-            "diff": "".join(current),
-            "hunk_ids": [f"{hunk.hunk_id}:part-{part}"],
-            "start_line": hunk.start_line,
-            "end_line": hunk.end_line,
-        })
-    return units
-
-
 def build_review_units(
     diff: str,
     changed_files: list[str],
@@ -167,7 +119,7 @@ def build_review_units(
             fallback_files = ["(unknown)"]
         # 无结构 Diff 也沿用 V4 Flash 的单元预算，避免旧的 12K 兼容上限
         # 在无法解析 Hunk 时提前丢弃审查输入。
-        legacy_budget = max(1, settings.review_unit_max_chars)
+        legacy_budget = max(1, settings.review_batch_max_chars)
         chunks = [diff[i:i + legacy_budget]
                   for i in range(0, len(diff), legacy_budget)]
         chunks = chunks or [""]
@@ -189,7 +141,7 @@ def build_review_units(
     current: list[DiffHunk] = []
     current_chars = 0
     previous: DiffHunk | None = None
-    max_chars = max(1, settings.review_unit_max_chars)
+    max_chars = max(1, settings.review_batch_max_chars)
     for hunk in hunks:
         adjacent = (
             previous is not None
@@ -200,36 +152,14 @@ def build_review_units(
             units.append(_merge_hunks(revision, current))
             current = []
             current_chars = 0
-        if len(hunk.text) > max_chars:
-            if current:
-                units.append(_merge_hunks(revision, current))
-                current = []
-                current_chars = 0
-            units.extend(_split_large_hunk(hunk, revision))
-        else:
-            current.append(hunk)
-            current_chars += len(hunk.text)
+        # 超大 Hunk 作为一个完整单元保留，避免拆分后丢失语义和行号边界。
+        current.append(hunk)
+        current_chars += len(hunk.text)
         previous = hunk
     if current:
         units.append(_merge_hunks(revision, current))
 
-    changed = []
-    for path in changed_files:
-        try:
-            normalised = normalize_relative_path(path)
-        except PathSecurityError:
-            continue
-        if normalised not in changed:
-            changed.append(normalised)
-    related = []
-    for path in context_candidates or []:
-        try:
-            normalised = normalize_relative_path(path)
-        except PathSecurityError:
-            continue
-        if normalised not in changed and normalised not in related:
-            related.append(normalised)
-    for index, unit in enumerate(units):
+    for unit in units:
         symbol_context = _find_symbol_context(
             unit["primary_file"],
             unit["start_line"],
@@ -238,21 +168,87 @@ def build_review_units(
         )
         if symbol_context:
             unit.update(symbol_context)
-        peers = [
-            path for path in changed
-            if path != unit["primary_file"]
-            and path.rsplit("/", 1)[0] == unit["primary_file"].rsplit("/", 1)[0]
-        ]
-        assigned_related = related[
-            index * max(1, settings.max_related_files_per_unit):
-            (index + 1) * max(1, settings.max_related_files_per_unit)
-        ]
-        unit["files"] = list(dict.fromkeys([
-            unit["primary_file"],
-            *peers[:max(1, settings.max_related_files_per_unit)],
-            *assigned_related,
-        ]))
+        unit["files"] = [unit["primary_file"]]
     return units
+
+
+def build_reviewer_batches(
+    units: list[dict],
+    reviewer_name: str,
+    *,
+    max_chars: int | None = None,
+) -> list[dict]:
+    """将适用的 ReviewUnit 合并为少量 Reviewer 批次。
+
+    完整 ReviewUnit 不跨批次拆分。一个超出批次预算的单元会独占批次，
+    调用方可以据此记录输入边界，但不会静默丢弃 Diff。
+    """
+    limit = max(1, max_chars or settings.review_batch_max_chars)
+    batches: list[dict] = []
+    current: list[dict] = []
+    current_chars = 0
+
+    def flush() -> None:
+        nonlocal current, current_chars
+        if not current:
+            return
+        unit_ids = [unit.get("unit_id", "") for unit in current]
+        hunk_ids = [
+            hunk_id
+            for unit in current
+            for hunk_id in unit.get("hunk_ids", [])
+        ]
+        files = list(dict.fromkeys(
+            path
+            for unit in current
+            for path in unit.get("files", [unit.get("primary_file", "")])
+            if path
+        ))
+        primary_files = list(dict.fromkeys(
+            unit.get("primary_file", "") for unit in current
+            if unit.get("primary_file")
+        ))
+        diff_parts = []
+        ranges = []
+        for unit in current:
+            file_path = unit.get("primary_file", "")
+            diff_parts.append(
+                f"# 文件: {file_path}\n{unit.get('diff', '')}"
+            )
+            ranges.append({
+                "file": file_path,
+                "start_line": int(unit.get("start_line", 1)),
+                "end_line": int(unit.get("end_line", 1)),
+            })
+        batch_payload = "\0".join([reviewer_name, *unit_ids])
+        batches.append({
+            "batch_id": "batch-" + hashlib.sha256(
+                batch_payload.encode("utf-8")
+            ).hexdigest()[:20],
+            "unit_ids": unit_ids,
+            "primary_file": primary_files[0] if primary_files else "",
+            "primary_files": primary_files,
+            "files": files,
+            "diff": "\n\n".join(diff_parts),
+            "hunk_ids": hunk_ids,
+            "ranges": ranges,
+            "oversized": any(len(unit.get("diff", "")) > limit for unit in current),
+        })
+        current = []
+        current_chars = 0
+
+    for unit in units:
+        if not reviewer_handles_file(reviewer_name, unit.get("primary_file", "")):
+            continue
+        unit_chars = len(unit.get("diff", ""))
+        if current and current_chars + unit_chars > limit:
+            flush()
+        current.append(unit)
+        current_chars += unit_chars
+        if unit_chars > limit:
+            flush()
+    flush()
+    return batches
 
 
 def reviewer_handles_file(reviewer_name: str, file_path: str) -> bool:

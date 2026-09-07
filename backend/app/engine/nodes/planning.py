@@ -11,7 +11,7 @@ def planning_node(state: ReviewState) -> ReviewState:
     diff = state.get("raw_diff", "")
 
     if hook := state.get("_log_hook"):
-        hook(step="planning", level="info", message="正在规划审查策略...")
+        hook(step="prepare_review", level="info", message="正在规划审查策略...")
 
     state["review_plan"] = build_review_plan(changed, diff)
     state["change_scopes"] = {
@@ -20,7 +20,7 @@ def planning_node(state: ReviewState) -> ReviewState:
 
     if hook := state.get("_log_hook"):
         plan_str = ", ".join(state["review_plan"]) if state["review_plan"] else "(无需通用 Reviewer)"
-        hook(step="planning", level="info",
+        hook(step="prepare_review", level="info",
              message=f"审查策略: {plan_str}")
 
     return state

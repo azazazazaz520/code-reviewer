@@ -1,26 +1,26 @@
 from pydantic_settings import BaseSettings
 
 
+# 审查上下文的运行时安全上限；用户配置可以低于此值，不能突破此值。
+REVIEW_CONTEXT_HARD_MAX_FILES = 20
+REVIEW_CONTEXT_HARD_MAX_CHARS = 60_000
+
+
 class Settings(BaseSettings):
     # 数据库
     database_url: str = "sqlite:///./data/code_reviewer.db"
 
     # 审查引擎
-    max_reflection_rounds: int = 3
-    max_incremental_reflection_rounds: int = 1
     reviewer_timeout_seconds: int = 120
     review_worker_poll_seconds: float = 1.0
-    context_files_per_round: int = 20
-    # V4 Flash 支持 1M 上下文；审查上下文上限使用字符预算，给消息封装和输出预留空间。
-    review_unit_max_chars: int = 100000
-    review_context_max_files: int = 500
-    review_context_max_chars: int = 2000000
-    review_context_padding_lines: int = 80
-    max_review_calls: int = 48
+    # 同一 Reviewer 的相邻变更按批次合并，完整 Hunk 不跨批次拆分。
+    review_batch_max_chars: int = 12000
+    review_context_max_files: int = 10
+    review_context_max_chars: int = 32000
+    supplement_context_max_chars: int = 12000
+    # Reviewer 动态后缀只保留变更 Hunk 附近的窄窗口。
+    review_context_padding_lines: int = 24
     max_review_duration_seconds: int = 1200
-    max_tool_rounds: int = 2
-    max_tool_calls_per_unit: int = 4
-    max_related_files_per_unit: int = 4
     review_parallelism: int = 3
 
     # 提示词工作区
@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     llm_model: str = "deepseek-v4-flash"
     llm_temperature: float = 0.1
     llm_max_tokens: int = 4096
+    # 主要审查、一次性上下文补充和 JSON 修复使用独立输出预算。
+    llm_review_max_tokens: int = 4096
+    llm_supplement_max_tokens: int = 2048
+    llm_json_repair_max_tokens: int = 1024
     deepseek_api_key: str = ""
     deepseek_base_url: str = "https://api.deepseek.com"
 
@@ -47,7 +51,7 @@ class Settings(BaseSettings):
     gitee_token: str = ""
 
     # CRG
-    crg_enabled: bool = True
+    crg_enabled: bool = False
 
     # 仓库存储
     repos_dir: str = "./data/repos"

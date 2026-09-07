@@ -28,9 +28,74 @@ from app.services.review_log import ReviewLogBuffer
 router = APIRouter(prefix="/api", tags=["reviews"])
 
 
+def _normalise_quality_metrics(quality: dict) -> dict:
+    """兼容历史报告，并过滤已知的低影响诊断事件。"""
+    normalised = dict(quality or {})
+    has_explicit_duplicate_count = "duplicate_findings" in normalised
+    reasons = normalised.get("filtered_reasons", {})
+    duplicate_count = int(
+        normalised.get(
+            "duplicate_findings",
+            reasons.get("duplicate_finding", 0) if isinstance(reasons, dict) else 0,
+        )
+        or 0
+    )
+    normalised["duplicate_findings"] = max(0, duplicate_count)
+    if not has_explicit_duplicate_count:
+        normalised["filtered_findings"] = max(
+            0,
+            int(normalised.get("filtered_findings", 0) or 0)
+            - normalised["duplicate_findings"],
+        )
+
+    failure_events = normalised.get("context_request_failure_events", [])
+    context_progress = normalised.get("context_progress", {})
+    if isinstance(failure_events, list) and isinstance(context_progress, dict):
+        retained_events = []
+        suppressed_count = 0
+        for event in failure_events:
+            progress = (
+                context_progress.get(event.get("file"), {})
+                if isinstance(event, dict)
+                else {}
+            )
+            ranges = progress.get("read_ranges", []) if isinstance(progress, dict) else []
+            max_read_end = max(
+                (
+                    item[1]
+                    for item in ranges
+                    if isinstance(item, list)
+                    and len(item) >= 2
+                    and isinstance(item[1], int)
+                ),
+                default=0,
+            )
+            message = str(event.get("message", "")) if isinstance(event, dict) else ""
+            requested_end = event.get("end_line", 0) if isinstance(event, dict) else 0
+            harmless_eof = (
+                bool(progress.get("complete"))
+                and "line range is outside file" in message
+                and isinstance(requested_end, int)
+                and requested_end > max_read_end
+            )
+            if harmless_eof:
+                suppressed_count += 1
+            else:
+                retained_events.append(event)
+        if suppressed_count:
+            normalised["context_request_failure_events"] = retained_events
+            normalised["context_request_failures"] = len(retained_events)
+            normalised["context_read_errors"] = max(
+                0,
+                int(normalised.get("context_read_errors", 0) or 0) - suppressed_count,
+            )
+    return normalised
+
+
 def _normalise_report_checks(checks: list[dict], quality: dict) -> list[dict]:
     """将历史报告中的内部校验术语转换成面向用户的提示。"""
     normalised = []
+    filtered_count = int(quality.get("filtered_findings", 0) or 0)
     for check in checks:
         item = dict(check)
         if item.get("name") == "finding_context":
@@ -39,8 +104,14 @@ def _normalise_report_checks(checks: list[dict], quality: dict) -> list[dict]:
                 f"{count} 个问题出现在修改文件的相邻代码中，请确认是否由本次提交引起。"
             )
         elif item.get("name") == "finding_gate":
-            count = quality.get("filtered_findings", 0)
-            item["message"] = f"{count} 条候选意见未达到证据要求，未计入最终结果。"
+            if filtered_count <= 0:
+                continue
+            item["message"] = f"{filtered_count} 条候选意见未达到证据要求，未计入最终结果。"
+        elif item.get("name") == "context_request_failed":
+            failure_count = int(quality.get("context_request_failures", 0) or 0)
+            if failure_count <= 0:
+                continue
+            item["message"] = f"有 {failure_count} 个必要上下文请求未完整读取。"
         normalised.append(item)
     return normalised
 
@@ -263,7 +334,7 @@ def get_review_report(task_id: str, db: Session = Depends(get_db)):
 
     stats = json.loads(report.stats_json)
     checks = stats.pop("checks", [])
-    quality = stats.pop("quality", {})
+    quality = _normalise_quality_metrics(stats.pop("quality", {}))
     checks = _normalise_report_checks(checks, quality)
     reviewer_outputs = stats.pop("reviewer_outputs", {})
     changes = stats.pop("changes", {})

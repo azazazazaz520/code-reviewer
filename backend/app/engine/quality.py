@@ -13,10 +13,10 @@ QUALITY_CHECK_NAMES = {
     "review_coverage",
     "review_hunks",
     "review_assignment_coverage",
+    "review_batch_failed",
+    "context_request_failed",
+    "output_repair_failed",
     "review_input_truncation",
-    "context_collection",
-    "review_tools",
-    "review_tool_budget",
     "review_budget",
     "review_cancelled",
 }
@@ -45,10 +45,16 @@ def compute_quality_metrics(
         finding.get("evidence_type") in {"static_check", "tool_verified"}
         for finding in accepted_findings
     )
+    filtered_reasons = dict(rejection_reasons or {})
+    duplicate_findings = max(0, int(filtered_reasons.get("duplicate_finding", 0) or 0))
+    rejected_findings = max(0, len(all_findings) - len(accepted_findings))
+    # 重复 Finding 是正常的跨 Reviewer 收口结果，不属于质量失败。
+    actionable_filtered_findings = max(0, rejected_findings - duplicate_findings)
     metrics = {
         "candidate_findings": len(all_findings),
         "accepted_findings": len(accepted_findings),
-        "filtered_findings": len(all_findings) - len(accepted_findings),
+        "filtered_findings": actionable_filtered_findings,
+        "duplicate_findings": duplicate_findings,
         "located_findings": sum(
             finding.get("line", 0) > 0 for finding in accepted_findings
         ),
@@ -61,7 +67,7 @@ def compute_quality_metrics(
         ),
     }
     if rejection_reasons is not None:
-        metrics["filtered_reasons"] = dict(rejection_reasons)
+        metrics["filtered_reasons"] = filtered_reasons
     if coverage:
         metrics.update(coverage)
     return metrics
@@ -70,16 +76,26 @@ def compute_quality_metrics(
 def build_quality_checks(metrics: dict) -> list[dict]:
     """由质量指标派生检查项，不修改已有 checks。"""
     checks: list[dict] = []
-    filtered_count = metrics.get("filtered_findings", 0)
+    filtered_count = int(metrics.get("filtered_findings", 0) or 0)
+    # 兼容历史报告：旧版本把重复 Finding 也计入 filtered_findings。
+    if "duplicate_findings" not in metrics:
+        filtered_count = max(
+            0,
+            filtered_count
+            - int(metrics.get("filtered_reasons", {}).get("duplicate_finding", 0) or 0),
+        )
     if filtered_count:
+        outside_scope = metrics.get("filtered_reasons", {}).get("outside_current_diff", 0)
+        message = (
+            f"{outside_scope} 个候选 Finding 超出当前 Diff 范围，未计入最终结果。"
+            if outside_scope
+            else f"{filtered_count} 个候选 Finding 未通过证据门槛，未计入最终结果。"
+        )
         checks.append(
             {
                 "name": "finding_gate",
                 "status": "warning",
-                "message": (
-                    f"{filtered_count} 个候选 Finding 未通过证据门槛，"
-                    "未计入最终结果。"
-                ),
+                "message": message,
             }
         )
     context_finding_count = metrics.get("reviewer_context_findings", 0)
@@ -129,39 +145,48 @@ def build_quality_checks(metrics: dict) -> list[dict]:
                 ),
             }
         )
-    if metrics.get("truncated_inputs"):
+    critical_truncated_inputs = metrics.get(
+        "critical_truncated_inputs",
+        metrics.get("truncated_inputs", 0),
+    )
+    if critical_truncated_inputs:
         checks.append(
             {
                 "name": "review_input_truncation",
                 "status": "warning",
-                "message": f"有 {metrics['truncated_inputs']} 个审查输入批次发生截断。",
-            }
-        )
-    if metrics.get("context_errors"):
-        checks.append(
-            {
-                "name": "context_collection",
-                "status": "warning",
                 "message": (
-                    f"有 {len(metrics['context_errors'])} 个上下文读取失败，"
-                    "相关文件未计入完整覆盖。"
+                    f"有 {critical_truncated_inputs} 个审查输入批次的 Diff 或主变更文件发生截断。"
                 ),
             }
         )
-    if metrics.get("tool_errors"):
+    if metrics.get("failed_batches"):
         checks.append(
             {
-                "name": "review_tools",
+                "name": "review_batch_failed",
                 "status": "warning",
-                "message": f"Reviewer Tool 调用失败 {metrics['tool_errors']} 次。",
+                "message": (
+                    f"有 {metrics['failed_batches']} 个 Reviewer 批次未完成。"
+                ),
             }
         )
-    if metrics.get("tool_budget_exhausted"):
+    if metrics.get("context_request_failures"):
         checks.append(
             {
-                "name": "review_tool_budget",
+                "name": "context_request_failed",
                 "status": "warning",
-                "message": "部分审查单元已达到 Tool 调用预算，后续结论仅基于已取得的上下文。",
+                "message": (
+                    f"有 {metrics['context_request_failures']} 个必要上下文请求未完整读取。"
+                ),
+            }
+        )
+    if metrics.get("output_repair_failures"):
+        checks.append(
+            {
+                "name": "output_repair_failed",
+                "status": "warning",
+                "message": (
+                    f"有 {metrics['output_repair_failures']} 个批次的结构化结果修复失败。"
+                ),
             }
         )
     if metrics.get("budget_exhausted"):

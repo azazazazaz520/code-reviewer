@@ -3,10 +3,7 @@
 节点实现位于 app.engine.nodes，本模块只负责图构建与运行入口。
 流程拓扑：
 
-Load PR → Planning → Validate Changes → Collect Context → Run Reviews → Reflection
-                                        ↑                              │
-                                        └──── need_more_context ────────┘
-                                        Reflection → Generate Report → END
+Load PR → Prepare Review → Run Reviews → Generate Report → END
 """
 
 from __future__ import annotations
@@ -21,13 +18,8 @@ from app.engine.execution import ReviewExecutionBudget
 from app.engine.tools.context import TaskToolCache
 from app.engine.nodes import (
     load_pr_node,
-    build_database_node,
-    planning_node,
-    validate_changes_node,
-    collect_context_node,
+    prepare_review_node,
     run_reviews_node,
-    reflection_node,
-    should_retry,
     generate_report_node,
 )
 from app.engine.snapshot import create_review_snapshot
@@ -40,27 +32,14 @@ def _build_graph() -> StateGraph:
     builder = StateGraph(ReviewState)
 
     builder.add_node("load_pr", load_pr_node)
-    builder.add_node("build_database", build_database_node)
-    builder.add_node("planning", planning_node)
-    builder.add_node("validate_changes", validate_changes_node)
-    builder.add_node("collect_context", collect_context_node)
+    builder.add_node("prepare_review", prepare_review_node)
     builder.add_node("run_reviews", run_reviews_node)
-    builder.add_node("reflection", reflection_node)
     builder.add_node("generate_report", generate_report_node)
 
     builder.set_entry_point("load_pr")
-    builder.add_edge("load_pr", "build_database")
-    builder.add_edge("build_database", "planning")
-    builder.add_edge("planning", "validate_changes")
-    builder.add_edge("validate_changes", "collect_context")
-    builder.add_edge("collect_context", "run_reviews")
-    builder.add_edge("run_reviews", "reflection")
-
-    builder.add_conditional_edges(
-        "reflection",
-        should_retry,
-        {"collect": "collect_context", "report": "generate_report"},
-    )
+    builder.add_edge("load_pr", "prepare_review")
+    builder.add_edge("prepare_review", "run_reviews")
+    builder.add_edge("run_reviews", "generate_report")
     builder.add_edge("generate_report", END)
 
     return builder.compile()
@@ -105,6 +84,25 @@ def run_workflow(
         workspace_target=workspace_target,
     )
     try:
+        effective_source_type = source_type or ("pr" if review_type == "pr" else "commit")
+        scope_target = {
+            "workspace": (
+                f"工作区提交 {snapshot.revision} 的当前改动"
+                if workspace_target in {"head_commit", "commit"}
+                else "当前工作区未提交改动"
+            ),
+            "commit": f"提交 {snapshot.revision} 的当前改动",
+            "remote_commit": f"远程提交 {snapshot.revision} 的当前改动",
+            "pr": f"Pull Request {pr_number or ''} 的当前改动".strip(),
+            "remote_latest": "远程分支最新提交的当前改动",
+        }.get(effective_source_type, "当前审查快照中的变更")
+        review_scope = {
+            "source_type": effective_source_type,
+            "target": scope_target,
+            "revision": snapshot.revision,
+            "base_revision": snapshot.base_revision,
+            "changed_files": list(snapshot.changed_files),
+        }
         initial_state: ReviewState = {
             "task_id": task_id or "",
             "repo_id": snapshot.repo_root,
@@ -121,6 +119,7 @@ def run_workflow(
             "snapshot_base_revision": snapshot.base_revision,
             "workspace_fingerprint": snapshot.workspace_fingerprint,
             "workspace_stats": snapshot.workspace_stats,
+            "review_scope": review_scope,
             "database_id": "",
             "database_status": "failed",
             "extraction_status": "failed",
@@ -146,7 +145,9 @@ def run_workflow(
             "reviewer_outputs": {},
             "reviewed_batch_keys": {},
             "review_units": [],
+            "review_batches": {},
             "reviewed_unit_keys": {},
+            "completed_batch_keys": {},
             "completed_unit_ids": [],
             "pending_unit_ids": [],
             "review_budget": {},
@@ -155,8 +156,6 @@ def run_workflow(
             "change_scopes": {},
             "file_context_cache": {},
             "findings": [],
-            "reflection_round": 0,
-            "need_more_context": False,
             "summary": "",
             "risk_level": "low",
             "review_status": "complete",
@@ -165,7 +164,6 @@ def run_workflow(
             "_log_hook": log_hook,
             "_cancel_check": cancel_check,
             "_review_budget_object": ReviewExecutionBudget(
-                max_primary_calls=settings.max_review_calls,
                 max_duration_seconds=settings.max_review_duration_seconds,
             ),
         }

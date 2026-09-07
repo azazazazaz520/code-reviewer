@@ -131,6 +131,7 @@ class ReviewQualityMetrics(BaseModel):
     candidate_findings: int = 0
     accepted_findings: int = 0
     filtered_findings: int = 0
+    duplicate_findings: int = 0
     truncated_outputs: int = 0
     located_findings: int = 0
     static_evidence_findings: int = 0
@@ -144,7 +145,10 @@ class ReviewQualityMetrics(BaseModel):
     extraction_errors: list[dict[str, Any]] = Field(default_factory=list)
     query_results: int = 0
     context_errors: dict[str, str] = Field(default_factory=dict)
-    tool_errors: int = 0
+    context_requests: int = 0
+    context_request_failures: int = 0
+    context_request_failure_events: list[dict[str, Any]] = Field(default_factory=list)
+    output_repair_failures: int = 0
     planned_files: int = 0
     covered_files: int = 0
     uncovered_files: list[str] = Field(default_factory=list)
@@ -153,6 +157,10 @@ class ReviewQualityMetrics(BaseModel):
     context_covered_hunks: int = 0
     uncovered_hunks: list[str] = Field(default_factory=list)
     truncated_inputs: int = 0
+    critical_truncated_inputs: int = 0
+    critical_truncation_events: list[str] = Field(default_factory=list)
+    context_limited_inputs: int = 0
+    context_limit_events: list[str] = Field(default_factory=list)
     coverage_status: str | None = None
     planned_units: int = 0
     reviewed_units: int = 0
@@ -175,15 +183,12 @@ class ReviewQualityMetrics(BaseModel):
     llm_prompt_cache_miss_tokens: int = 0
     llm_prompt_cache_hit_rate: float = 0
     session_rebuilds: int = 0
-    tool_calls: int = 0
-    tool_requests: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    read_file_requests: int = 0
-    read_file_cache_hits: int = 0
-    read_file_cache_misses: int = 0
-    read_file_errors: int = 0
-    tool_budget_exhausted: bool = False
+    context_reads: int = 0
+    context_read_requests: int = 0
+    context_cache_hits: int = 0
+    context_cache_misses: int = 0
+    context_read_errors: int = 0
+    failed_batches: int = 0
     elapsed_seconds: float = 0
     budget_exhausted: bool = False
     budget_exhausted_reason: str | None = None
@@ -197,6 +202,8 @@ class ReviewerOutputAttempt(BaseModel):
     truncated: bool = False
     finish_reason: str | None = None
     usage: dict[str, int] = Field(default_factory=dict)
+    max_tokens: int | None = None
+    thinking: str | None = None
 
 
 class ReviewerOutputTrace(BaseModel):

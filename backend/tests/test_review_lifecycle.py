@@ -13,6 +13,8 @@ from app.api.reviews import (
     list_reviews_with_archive,
     restore_review,
     cancel_review,
+    _normalise_quality_metrics,
+    _normalise_report_checks,
 )
 from app.models.base import Base
 from app.models.repo import Repo, ReviewLog, ReviewReport, ReviewTask
@@ -59,6 +61,69 @@ class ReviewLifecycleTests(unittest.TestCase):
         active = list_reviews_with_archive(self.repo.id, False, self.session)
         self.assertEqual(len(active), 1)
         self.assertIsNone(active[0].archived_at)
+
+    def test_historical_duplicate_findings_do_not_create_gate_warning(self):
+        quality = _normalise_quality_metrics(
+            {
+                "filtered_findings": 1,
+                "filtered_reasons": {"duplicate_finding": 1},
+            }
+        )
+
+        self.assertEqual(quality["filtered_findings"], 0)
+        self.assertEqual(quality["duplicate_findings"], 1)
+        self.assertEqual(
+            _normalise_report_checks(
+                [
+                    {
+                        "name": "finding_gate",
+                        "status": "warning",
+                        "message": "旧的重复意见告警",
+                    }
+                ],
+                quality,
+            ),
+            [],
+        )
+
+    def test_historical_complete_context_eof_does_not_create_warning(self):
+        quality = _normalise_quality_metrics(
+            {
+                "context_request_failures": 1,
+                "context_read_errors": 1,
+                "context_request_failure_events": [
+                    {
+                        "file": "src/settings.py",
+                        "start_line": 1,
+                        "end_line": 200,
+                        "message": "Error: line range is outside file: src/settings.py",
+                    }
+                ],
+                "context_progress": {
+                    "src/settings.py": {
+                        "read_ranges": [[1, 131]],
+                        "complete": True,
+                    }
+                },
+            }
+        )
+
+        self.assertEqual(quality["context_request_failures"], 0)
+        self.assertEqual(quality["context_read_errors"], 0)
+        self.assertEqual(quality["context_request_failure_events"], [])
+        self.assertEqual(
+            _normalise_report_checks(
+                [
+                    {
+                        "name": "context_request_failed",
+                        "status": "warning",
+                        "message": "旧的上下文读取告警",
+                    }
+                ],
+                quality,
+            ),
+            [],
+        )
 
     def test_running_review_cannot_be_archived_or_deleted(self):
         self.task.status = "running"

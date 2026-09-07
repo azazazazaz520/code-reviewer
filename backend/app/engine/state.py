@@ -23,6 +23,7 @@ class ReviewState(TypedDict, total=False):
     snapshot_base_revision: str
     workspace_fingerprint: str | None
     workspace_stats: dict[str, int] | None
+    review_scope: dict
     database_id: str
     database_status: str
     extraction_status: str
@@ -50,7 +51,9 @@ class ReviewState(TypedDict, total=False):
     reviewer_outputs: dict[str, dict]
     reviewed_batch_keys: dict[str, list[str]]
     review_units: list[dict]
+    review_batches: dict[str, list[dict]]
     reviewed_unit_keys: dict[str, list[str]]
+    completed_batch_keys: dict[str, list[str]]
     completed_unit_ids: list[str]
     pending_unit_ids: list[str]
     review_budget: dict
@@ -65,10 +68,6 @@ class ReviewState(TypedDict, total=False):
 
     # 审查发现
     findings: list[dict]
-
-    # Reflection 循环
-    reflection_round: int
-    need_more_context: bool
 
     # 最终报告
     summary: str

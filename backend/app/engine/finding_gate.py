@@ -142,8 +142,13 @@ def filter_findings(
     repo_root: str | None = None,
     approved_context_refs: list[dict] | None = None,
     rejection_reasons: dict[str, int] | None = None,
+    require_changed_line: bool = False,
 ) -> list[dict]:
-    """过滤越界、无证据、不确定和重复的候选 Finding。"""
+    """过滤越界、无证据、不确定和重复的候选 Finding。
+
+    ``require_changed_line`` 用于正式审查收口：Reviewer Finding 必须落在
+    当前 Diff 的变更行，代码上下文和数据库查询结果只能帮助理解，不能扩大报告范围。
+    """
 
     def reject(reason: str) -> None:
         if rejection_reasons is not None:
@@ -174,6 +179,7 @@ def filter_findings(
         return None
 
     changed_lines = changed_line_map(diff)
+    has_file_headers = any(line.startswith("+++ ") for line in diff.splitlines())
     accepted: list[dict] = []
     seen: set[tuple[str, int, str]] = set()
     line_count_cache = {}
@@ -196,6 +202,13 @@ def filter_findings(
             continue
 
         evidence_source = finding.get("_evidence_source", "reviewer")
+        if require_changed_line and evidence_source != "validator":
+            file_lines = changed_lines.get(file_path, set())
+            # 兼容只传入片段 Hunk 的旧调用方；完整 unified diff 会提供文件头，
+            # 此时严格要求 Finding 落在该文件的新增/修改行。
+            if file_path not in changed or (has_file_headers and finding["line"] not in file_lines):
+                reject("outside_current_diff")
+                continue
         requested_evidence_type = finding.get("evidence_type", "reviewer")
         if requested_evidence_type == "external_unverified" or _has_uncertain_language(finding):
             reject("uncertain_claim")

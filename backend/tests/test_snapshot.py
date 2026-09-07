@@ -10,7 +10,7 @@ from app.engine.snapshot import (
     _capture_workspace_state,
     create_review_snapshot,
 )
-from app.engine.context import select_reviewer_context
+from app.engine.context import select_reviewer_batch_context
 
 
 class ReviewSnapshotTest(unittest.TestCase):
@@ -37,15 +37,18 @@ class ReviewSnapshotTest(unittest.TestCase):
         self.assertEqual(state.untracked_files, ("new.txt",))
         self.assertFalse(any("--others" in args for args in git_calls))
 
-    def test_reviewer_context_prioritizes_changed_files_and_caps_budget(self):
-        selected = select_reviewer_context(
+    def test_reviewer_context_prioritizes_batch_primary_files(self):
+        selected = select_reviewer_batch_context(
             {"related.py": "r" * 100, "changed.py": "c" * 100},
-            ["changed.py"],
+            {
+                "primary_files": ["changed.py"],
+                "ranges": [{"file": "changed.py", "start_line": 1, "end_line": 1}],
+            },
             "style_reviewer",
         )
 
-        self.assertEqual(list(selected), ["changed.py", "related.py"])
-        self.assertLessEqual(sum(map(len, selected.values())), 12000)
+        self.assertEqual(list(selected.files), ["changed.py"])
+        self.assertLessEqual(sum(map(len, selected.files.values())), 60000)
 
     def test_local_commit_uses_one_revision_and_cleans_worktree(self):
         with TemporaryDirectory(prefix="snapshot-test-") as temp_dir:

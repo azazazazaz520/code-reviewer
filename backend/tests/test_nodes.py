@@ -11,24 +11,19 @@ import time
 from pathlib import Path
 from unittest import mock
 
-import app.engine.nodes.collect_context as collect_context_module
+import app.engine.nodes.prepare_review as prepare_review_module
 import app.engine.nodes.load_pr as load_pr_module
 import app.engine.reviewers as reviewers_module
 from app.config import settings
 from app.engine.nodes import (
-    collect_context_node,
     generate_report_node,
     load_pr_node,
     planning_node,
-    reflection_node,
+    prepare_review_node,
     run_reviews_node,
-    should_retry,
     validate_changes_node,
 )
-from app.engine.tools.context import ApprovedContextRef, TaskToolCache, TaskToolContext
 from app.engine.context import REVIEW_DIFF_BATCH_CHARS
-from app.engine.reviewers.base import ReviewerContext
-from app.engine.reviewers.style import StyleReviewer
 
 
 class LoadPrNodeTests(unittest.TestCase):
@@ -101,275 +96,59 @@ class ValidateChangesNodeTests(unittest.TestCase):
         self.assertEqual(result["checks"], [])
 
 
-class CollectContextNodeTests(unittest.TestCase):
-    def test_skips_when_plan_is_empty(self):
+class PrepareReviewNodeTests(unittest.TestCase):
+    def test_builds_plan_context_units_and_complete_diff_coverage(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "src" / "app.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("value = 1\n", encoding="utf-8")
+            state = {
+                "repo_id": temp_dir,
+                "snapshot_revision": "working-tree",
+                "changed_files": ["src/app.py"],
+                "raw_diff": (
+                    "diff --git a/src/app.py b/src/app.py\n"
+                    "--- a/src/app.py\n"
+                    "+++ b/src/app.py\n"
+                    "@@ -1,0 +1,1 @@\n"
+                    "+value = 1\n"
+                ),
+                "workflow_errors": [],
+                "checks": [],
+                "_log_hook": None,
+            }
+
+            with mock.patch.object(settings, "crg_enabled", False):
+                result = prepare_review_node(state)
+
+        self.assertIn("style_reviewer", result["review_plan"])
+        self.assertEqual(len(result["review_units"]), 1)
+        self.assertEqual(result["coverage"]["coverage_status"], "complete")
+        self.assertEqual(result["coverage"]["uncovered_hunks"], [])
+        self.assertIn("src/app.py", result["file_context_cache"])
+        self.assertEqual(result["database_status"], "skipped")
+
+    def test_deep_context_is_opt_in(self):
         state = {
             "repo_id": ".",
-            "changed_files": ["a.py"],
-            "review_plan": [],
+            "snapshot_revision": "rev-1",
+            "changed_files": [],
+            "raw_diff": "",
+            "workflow_errors": [],
+            "checks": [],
             "_log_hook": None,
         }
 
-        result = collect_context_node(state)
-
-        self.assertTrue(result["context_initialized"])
-        self.assertEqual(result["context_candidates"], [])
-
-    def test_reads_candidates_when_crg_unavailable(self):
         with (
-            mock.patch.object(collect_context_module, "try_crg_context", return_value=False),
-            mock.patch.object(collect_context_module, "read_file", return_value="content"),
+            mock.patch.object(settings, "crg_enabled", False),
+            mock.patch.object(prepare_review_module, "build_database_node") as build_db,
+            mock.patch.object(prepare_review_module, "try_crg_context") as try_crg,
         ):
-            state = {
-                "repo_id": ".",
-                "changed_files": ["a.py", "b.py"],
-                "review_plan": ["style_reviewer"],
-                "_log_hook": None,
-            }
-            result = collect_context_node(state)
+            prepare_review_node(state)
 
-        self.assertFalse(result["crg_enabled"])
-        self.assertEqual(result["context_candidates"], ["a.py", "b.py"])
-        self.assertEqual(set(result["file_context_cache"]), {"a.py", "b.py"})
-        self.assertEqual(result["context_round"], 1)
-
-    def test_context_pages_share_task_tool_cache(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "app.py"
-            path.write_text("value = 1\n", encoding="utf-8")
-            tool_context = TaskToolContext(
-                repo_root=temp_dir,
-                revision="rev-1",
-                approved_context_refs=(ApprovedContextRef("app.py", 1, 1),),
-            )
-            tool_cache = TaskToolCache()
-            context_errors = {}
-            first_progress = {}
-            second_progress = {}
-
-            with mock.patch.object(
-                collect_context_module,
-                "read_file",
-                wraps=collect_context_module.read_file,
-            ) as read_file:
-                collect_context_module._read_context_page(
-                    tool_context,
-                    "app.py",
-                    (1, 1),
-                    first_progress,
-                    {},
-                    context_errors,
-                    tool_cache,
-                )
-                collect_context_module._read_context_page(
-                    tool_context,
-                    "app.py",
-                    (1, 1),
-                    second_progress,
-                    {},
-                    context_errors,
-                    tool_cache,
-                )
-
-            self.assertEqual(read_file.call_count, 1)
-            self.assertEqual(tool_cache.stats()["tool_calls"], 1)
-            self.assertEqual(tool_cache.stats()["read_file_requests"], 2)
-            self.assertEqual(tool_cache.stats()["read_file_cache_hits"], 1)
-
-    def test_reviewer_cache_hit_renders_context_page_as_string(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "app.py"
-            path.write_text("value = 1\n", encoding="utf-8")
-            tool_context = TaskToolContext(
-                repo_root=temp_dir,
-                revision="rev-1",
-                approved_context_refs=(ApprovedContextRef("app.py", 1, 1),),
-            )
-            tool_cache = TaskToolCache()
-            progress = {}
-
-            collect_context_module._read_context_page(
-                tool_context,
-                "app.py",
-                (1, 1),
-                progress,
-                {},
-                {},
-                tool_cache,
-            )
-
-            reviewer_context = ReviewerContext(
-                tool_context=tool_context,
-                tool_cache=tool_cache,
-            )
-            result = reviewers_module.StyleReviewer()._build_tool_handlers(
-                reviewer_context
-            )["ReadFile"](
-                file_path=str(path),
-                start_line=1,
-                max_lines=1,
-            )
-
-        self.assertIsInstance(result, str)
-        self.assertIn("value = 1", result)
-        self.assertEqual(tool_cache.stats()["tool_calls"], 1)
-        self.assertEqual(tool_cache.stats()["cache_hits"], 1)
-
-    def test_crg_high_impact_appends_security_reviewer(self):
-        with (
-            mock.patch.object(collect_context_module, "try_crg_context", return_value=True),
-            mock.patch.object(collect_context_module, "read_file", return_value="content"),
-        ):
-            state = {
-                "repo_id": ".",
-                "changed_files": ["a.py"],
-                "review_plan": ["style_reviewer"],
-                "impact_radius": {
-                    "changed_nodes": 10,
-                    "impacted_nodes": 30,
-                    "impacted_files": 5,
-                },
-                "_log_hook": None,
-            }
-            result = collect_context_node(state)
-
-        self.assertTrue(result["crg_enabled"])
-        self.assertIn("security_reviewer", result["review_plan"])
-
-    def test_low_impact_keeps_plan_unchanged(self):
-        with (
-            mock.patch.object(collect_context_module, "try_crg_context", return_value=True),
-            mock.patch.object(collect_context_module, "read_file", return_value="content"),
-        ):
-            state = {
-                "repo_id": ".",
-                "changed_files": ["a.py"],
-                "review_plan": ["style_reviewer"],
-                "impact_radius": {"changed_nodes": 1, "impacted_nodes": 2, "impacted_files": 1},
-                "_log_hook": None,
-            }
-            result = collect_context_node(state)
-
-        self.assertEqual(result["review_plan"], ["style_reviewer"])
-
-    def test_reads_large_file_in_pages_and_reports_complete_coverage(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "large.py"
-            path.write_text("\n".join(f"line-{n}" for n in range(1, 405)), encoding="utf-8")
-            state = {
-                "repo_id": temp_dir,
-                "changed_files": ["large.py"],
-                "review_plan": ["style_reviewer"],
-                "raw_diff": "@@ -1,0 +1,1 @@\n+line-1\n",
-                "context_initialized": False,
-                "context_round": 0,
-                "context_progress": {},
-                "file_context_cache": {},
-                "context_errors": {},
-                "tool_context": TaskToolContext(
-                    repo_root=temp_dir,
-                    revision="rev-1",
-                    approved_context_refs=(ApprovedContextRef("large.py", 1, 404),),
-                ),
-                "database_status": "ready",
-                "extraction_status": "complete",
-                "coverage": {},
-                "_log_hook": None,
-            }
-
-            with mock.patch.object(collect_context_module, "try_crg_context", return_value=False), \
-                    mock.patch.object(collect_context_module.settings, "context_files_per_round", 1):
-                collect_context_node(state)
-                self.assertEqual(state["coverage"]["covered_files"], 0)
-                collect_context_node(state)
-                collect_context_node(state)
-
-            self.assertTrue(state["context_progress"]["large.py"]["complete"])
-            self.assertEqual(state["coverage"]["covered_files"], 1)
-            self.assertEqual(state["coverage"]["coverage_status"], "complete")
-            self.assertIn("line-404", state["file_context_cache"]["large.py"])
-
-    def test_priority_context_ranges_mark_file_complete(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            path = Path(temp_dir) / "app.py"
-            path.write_text("value = 1\nvalue = 2\n", encoding="utf-8")
-            state = {
-                "repo_id": temp_dir,
-                "changed_files": ["app.py"],
-                "review_plan": ["style_reviewer"],
-                "raw_diff": (
-                    "diff --git a/app.py b/app.py\n"
-                    "--- a/app.py\n"
-                    "+++ b/app.py\n"
-                    "@@ -1,2 +1,2 @@\n"
-                    "-old\n"
-                    "+value = 1\n"
-                    " value = 2\n"
-                ),
-                "context_initialized": False,
-                "context_round": 0,
-                "context_progress": {},
-                "file_context_cache": {},
-                "context_errors": {},
-                "tool_context": TaskToolContext(
-                    repo_root=temp_dir,
-                    revision="rev-1",
-                    approved_context_refs=(ApprovedContextRef("app.py", 1, 2),),
-                ),
-                "database_status": "ready",
-                "extraction_status": "complete",
-                "coverage": {},
-                "_log_hook": None,
-            }
-
-            with mock.patch.object(collect_context_module, "try_crg_context", return_value=False):
-                collect_context_node(state)
-
-        self.assertTrue(state["context_progress"]["app.py"]["complete"])
-        self.assertEqual(state["coverage"]["covered_files"], 1)
-        self.assertEqual(state["coverage"]["uncovered_files"], [])
-
-    def test_processes_remaining_files_after_first_batch(self):
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repo = Path(temp_dir)
-            changed_files = []
-            refs = []
-            for index in range(25):
-                file_path = f"src/file-{index}.py"
-                target = repo / file_path
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_text(f"value = {index}\n", encoding="utf-8")
-                changed_files.append(file_path)
-                refs.append(ApprovedContextRef(file_path, 1, 1))
-
-            state = {
-                "repo_id": temp_dir,
-                "changed_files": changed_files,
-                "review_plan": ["style_reviewer"],
-                "context_initialized": False,
-                "context_round": 0,
-                "context_progress": {},
-                "file_context_cache": {},
-                "context_errors": {},
-                "tool_context": TaskToolContext(
-                    repo_root=temp_dir,
-                    revision="rev-1",
-                    approved_context_refs=tuple(refs),
-                ),
-                "database_status": "ready",
-                "extraction_status": "complete",
-                "coverage": {},
-                "_log_hook": None,
-            }
-
-            with mock.patch.object(collect_context_module, "try_crg_context", return_value=False), \
-                    mock.patch.object(collect_context_module.settings, "context_files_per_round", 20):
-                collect_context_node(state)
-                self.assertEqual(state["coverage"]["covered_files"], 20)
-                collect_context_node(state)
-
-            self.assertEqual(state["coverage"]["covered_files"], 25)
-            self.assertEqual(len(state["coverage"]["uncovered_files"]), 0)
+        build_db.assert_not_called()
+        try_crg.assert_not_called()
+        self.assertFalse(state["crg_enabled"])
 
 
 class _GoodReviewer:
@@ -411,25 +190,14 @@ class _CoverageBatchReviewer:
         context.input_coverage["truncation_events"] = [
             f"batch:{self.batch_number}:truncation"
         ]
-        context.input_coverage["tool_error_events"] = [
+        context.input_coverage["context_request_failure_events"] = [
             {
-                "key": f"batch:{self.batch_number}:tool-error",
-                "tool": "ReadFile",
-                "message": "模拟 Tool 参数错误",
+                "file": f"src/{self.batch_number}.py",
+                "message": "模拟上下文读取失败",
             }
         ]
         context.input_coverage["truncated_inputs"] = 1
-        context.input_coverage["tool_errors"] = 1
-        return []
-
-
-class _ModelDecisionReviewer:
-    def review(self, context):
-        StyleReviewer()._build_tool_handlers(context)["ReadFile"](
-            file_path="src/app.py",
-            start_line=1,
-            max_lines="1.5",
-        )
+        context.input_coverage["context_request_failures"] = 1
         return []
 
 
@@ -505,7 +273,7 @@ class RunReviewsNodeTests(unittest.TestCase):
         self.assertEqual(names.count("review_coverage"), 1)
         self.assertEqual(names.count("review_hunks"), 1)
 
-    def test_large_reviewer_context_is_split_without_input_truncation(self):
+    def test_unrelated_cached_context_does_not_create_extra_batches(self):
         reviewer = _BatchReviewer()
         reviewers_module.REVIEWER_REGISTRY.update({"style_reviewer": reviewer})
         state = self._state()
@@ -519,7 +287,7 @@ class RunReviewsNodeTests(unittest.TestCase):
         ):
             result = run_reviews_node(state)
 
-        self.assertEqual(len(reviewer.contexts), 2)
+        self.assertEqual(len(reviewer.contexts), 1)
         self.assertEqual(result["coverage"]["truncated_inputs"], 0)
         self.assertTrue(all(
             context.input_coverage["truncated_inputs"] == 0
@@ -530,10 +298,10 @@ class RunReviewsNodeTests(unittest.TestCase):
             settings, "review_context_max_chars", 12000
         ):
             run_reviews_node(state)
-        self.assertEqual(len(reviewer.contexts), 2)
+        self.assertEqual(len(reviewer.contexts), 1)
         self.assertEqual(state["coverage"]["truncated_inputs"], 0)
 
-    def test_diff_and_context_batches_are_not_cross_product(self):
+    def test_unstructured_diff_fallback_does_not_cross_with_context_batches(self):
         reviewer = _BatchReviewer()
         reviewers_module.REVIEWER_REGISTRY.update({"style_reviewer": reviewer})
         state = self._state()
@@ -543,7 +311,7 @@ class RunReviewsNodeTests(unittest.TestCase):
             "src/b.py": "b" * 7000,
         }
 
-        with mock.patch.object(settings, "review_unit_max_chars", REVIEW_DIFF_BATCH_CHARS):
+        with mock.patch.object(settings, "review_batch_max_chars", REVIEW_DIFF_BATCH_CHARS):
             run_reviews_node(state)
 
         self.assertEqual(len(reviewer.contexts), 3)
@@ -552,14 +320,17 @@ class RunReviewsNodeTests(unittest.TestCase):
         reviewer = _CoverageBatchReviewer()
         reviewers_module.REVIEWER_REGISTRY.update({"style_reviewer": reviewer})
         state = self._state()
-        state["file_context_cache"] = {
-            "src/a.py": "a" * 7000,
-            "src/b.py": "b" * 7000,
-        }
+        state["changed_files"] = ["src/a.py", "src/b.py"]
+        state["raw_diff"] = (
+            "diff --git a/src/a.py b/src/a.py\n"
+            "--- a/src/a.py\n+++ b/src/a.py\n"
+            "@@ -1,1 +1,1 @@\n-old\n+new\n"
+            "diff --git a/src/b.py b/src/b.py\n"
+            "--- a/src/b.py\n+++ b/src/b.py\n"
+            "@@ -1,1 +1,1 @@\n-old\n+new\n"
+        )
 
-        with mock.patch.object(settings, "review_context_max_files", 10), mock.patch.object(
-            settings, "review_context_max_chars", 12000
-        ):
+        with mock.patch.object(settings, "review_batch_max_chars", 1):
             result = run_reviews_node(state)
 
         trace = result["reviewer_outputs"]["style_reviewer"]["input_coverage"]
@@ -569,12 +340,36 @@ class RunReviewsNodeTests(unittest.TestCase):
         )
         self.assertEqual(trace["truncated_inputs"], 2)
         self.assertEqual(
-            [event["key"] for event in trace["tool_error_events"]],
-            ["batch:1:tool-error", "batch:2:tool-error"],
+            [event["file"] for event in trace["context_request_failure_events"]],
+            ["src/1.py", "src/2.py"],
         )
-        self.assertEqual(trace["tool_errors"], 2)
+        self.assertEqual(trace["context_request_failures"], 2)
         self.assertEqual(result["coverage"]["truncated_inputs"], 2)
-        self.assertEqual(result["coverage"]["tool_errors"], 2)
+        self.assertEqual(result["coverage"]["context_request_failures"], 2)
+
+    def test_context_limits_are_kept_as_diagnostics_without_degrading_review(self):
+        class ContextLimitedReviewer:
+            def review(self, context):
+                context.input_coverage.update(
+                    {
+                        "context_limit_events": ["selection:omitted:src/related.py"],
+                        "context_limited_inputs": 1,
+                    }
+                )
+                return []
+
+        reviewers_module.REVIEWER_REGISTRY.update(
+            {"style_reviewer": ContextLimitedReviewer()}
+        )
+
+        result = run_reviews_node(self._state())
+
+        self.assertEqual(result["coverage"]["truncated_inputs"], 0)
+        self.assertEqual(result["coverage"]["context_limited_inputs"], 1)
+        self.assertNotIn(
+            "review_input_truncation",
+            [check["name"] for check in result["checks"]],
+        )
 
     def test_prompt_cache_metrics_are_aggregated_by_provider_request(self):
         class UsageReviewer:
@@ -610,28 +405,7 @@ class RunReviewsNodeTests(unittest.TestCase):
             160 / 220,
         )
 
-    def test_model_decision_errors_do_not_create_tool_error_check(self):
-        reviewers_module.REVIEWER_REGISTRY.update(
-            {"style_reviewer": _ModelDecisionReviewer()}
-        )
-        state = self._state()
-        state["tool_context"] = TaskToolContext(
-            repo_root="E:/snapshot-root",
-            revision="rev-1",
-        )
-
-        result = run_reviews_node(state)
-
-        self.assertEqual(result["quality_metrics"]["tool_errors"], 0)
-        self.assertNotIn(
-            "review_tools",
-            [check["name"] for check in result["checks"]],
-        )
-        trace = result["reviewer_outputs"]["style_reviewer"]["input_coverage"]
-        self.assertEqual(trace["model_decision_errors"], 1)
-        self.assertEqual(trace["tool_errors"], 0)
-
-    def test_primary_budget_is_reserved_when_unit_starts(self):
+    def test_planned_batches_are_not_cut_by_a_call_count_budget(self):
         reviewer = _BatchReviewer()
         reviewers_module.REVIEWER_REGISTRY.update({"style_reviewer": reviewer})
         state = self._state()
@@ -648,19 +422,19 @@ class RunReviewsNodeTests(unittest.TestCase):
             "coverage_status": "incomplete",
         }
 
-        with mock.patch.object(settings, "max_review_calls", 1):
-            result = run_reviews_node(state)
+        result = run_reviews_node(state)
 
         self.assertEqual(len(reviewer.contexts), 1)
         self.assertEqual(result["quality_metrics"]["primary_llm_calls"], 1)
-        self.assertEqual(result["quality_metrics"]["pending_units"], 1)
-        self.assertEqual(result["quality_metrics"]["reviewed_units"], 1)
+        self.assertNotIn("max_review_calls", result["quality_metrics"])
+        self.assertEqual(result["quality_metrics"]["pending_units"], 0)
+        self.assertEqual(result["quality_metrics"]["reviewed_units"], 2)
         self.assertEqual(result["quality_metrics"]["context_covered_hunks"], 1)
         self.assertEqual(
             result["quality_metrics"]["pending_reviewer_assignments"],
-            1,
+            0,
         )
-        self.assertEqual(result["quality_metrics"]["budget_exhausted_reason"], "primary_calls")
+        self.assertFalse(result["quality_metrics"].get("budget_exhausted"))
 
     def test_cancel_check_stops_reviewer_before_primary_call(self):
         reviewer = _BatchReviewer()
@@ -697,77 +471,6 @@ class RunReviewsNodeTests(unittest.TestCase):
         self.assertEqual(len(started), 2)
         self.assertEqual(len({thread_id for _name, thread_id in started}), 2)
         self.assertEqual(list(result["reviewer_outputs"]), ["style_reviewer", "security_reviewer"])
-
-
-class ReflectionNodeTests(unittest.TestCase):
-    def test_stops_when_no_findings(self):
-        state = {"findings": [], "reflection_round": 0, "_log_hook": None}
-
-        result = reflection_node(state)
-
-        self.assertEqual(result["reflection_round"], 1)
-        self.assertFalse(result["need_more_context"])
-
-    def test_stops_when_findings_have_line_refs(self):
-        state = {
-            "findings": [{"file": "a.py", "line": 3}],
-            "reflection_round": 0,
-            "context_candidates": ["b.py"],
-            "file_context_cache": {},
-            "_log_hook": None,
-        }
-
-        result = reflection_node(state)
-
-        self.assertFalse(result["need_more_context"])
-
-    def test_requests_more_context_without_line_refs(self):
-        state = {
-            "findings": [{"file": "a.py", "line": 0}],
-            "reflection_round": 0,
-            "context_candidates": ["b.py"],
-            "file_context_cache": {},
-            "_log_hook": None,
-        }
-
-        result = reflection_node(state)
-
-        self.assertTrue(result["need_more_context"])
-
-    def test_stops_at_max_rounds(self):
-        state = {
-            "findings": [{"file": "a.py", "line": 0}],
-            "reflection_round": 3,
-            "context_candidates": ["b.py"],
-            "file_context_cache": {},
-            "_log_hook": None,
-        }
-
-        result = reflection_node(state)
-
-        self.assertEqual(result["reflection_round"], 4)
-        self.assertFalse(result["need_more_context"])
-
-    def test_retries_when_coverage_is_incomplete_even_with_line_refs(self):
-        state = {
-            "findings": [{"file": "a.py", "line": 3}],
-            "reflection_round": 0,
-            "coverage": {
-                "uncovered_files": ["b.py"],
-                "uncovered_hunks": [],
-            },
-            "_log_hook": None,
-        }
-
-        result = reflection_node(state)
-
-        self.assertTrue(result["need_more_context"])
-
-
-class ShouldRetryTests(unittest.TestCase):
-    def test_routes_by_need_more_context(self):
-        self.assertEqual(should_retry({"need_more_context": True}), "collect")
-        self.assertEqual(should_retry({"need_more_context": False}), "report")
 
 
 class GenerateReportNodeTests(unittest.TestCase):
