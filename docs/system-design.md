@@ -36,11 +36,8 @@ E:\code-reviewer\
 │   │   │   ├── nodes/
 │   │   │   │   ├── __init__.py
 │   │   │   │   ├── load_pr.py
-│   │   │   │   ├── planning.py
-│   │   │   │   ├── validate_changes.py
-│   │   │   │   ├── collect_context.py
+│   │   │   │   ├── prepare_review.py  # 规划、校验、快照上下文和批次准备
 │   │   │   │   ├── run_reviews.py
-│   │   │   │   ├── reflection.py
 │   │   │   │   └── generate_report.py
 │   │   │   ├── crg.py           # CRG 影响半径分析（失败静默降级）
 │   │   │   ├── quality.py       # 审查质量指标与门槛检查纯函数
@@ -106,7 +103,8 @@ E:\code-reviewer\
 │   ├── CONTEXT.md
 │   ├── adr/
 │   │   ├── 0001-reflection-loop-termination.md
-│   │   └── 0002-planning-trigger-dual-strategy.md
+│   │   ├── 0002-planning-trigger-dual-strategy.md
+│   │   └── 0003-bounded-review-flow.md
 │   ├── crg-integration-plan.md
 │   └── system-design.md          # ← 本文件
 │
@@ -137,7 +135,6 @@ E:\code-reviewer\
 | branch | VARCHAR(200) NULL | local 场景 |
 | base_branch | VARCHAR(100) NULL | PR 场景 |
 | status | VARCHAR(20) | pending / running / done / failed |
-| reflection_rounds | INT DEFAULT 0 | Reflection 循环次数 |
 | created_at | DATETIME | |
 | completed_at | DATETIME NULL | |
 
@@ -330,10 +327,8 @@ Backend: 创建 ReviewTask (status=pending)
 Backend: BackgroundTasks 启动 LangGraph Workflow
     │
     ├─ Load PR:   GetDiff (GitHub API or local git)
-    ├─ Planning:  LLM + CRG HubNodes → Review Plan
-    ├─ Collect:   CRG.get_review_context → 爆炸半径 → ReadFile(精准15个文件)
-    ├─ Run:       Reviewer 并行执行 → Findings
-    ├─ Reflect:   检查 Findings 完整性 → 回退或继续
+    ├─ Prepare:   生成 Review Plan、执行确定性校验、读取变更文件窗口并构造 Reviewer 批次
+    ├─ Run:       每个批次一次结构化审查；必要时最多一次上下文补充
     └─ Generate:  聚合 Findings → Report
     │
     ▼
@@ -354,7 +349,7 @@ Frontend: 轮询到 status=done → GET /api/reviews/{id}/report → 渲染报�
 | 阶段 | 内容 |
 |---|---|
 | 1 | 后端骨架：FastAPI 入口 + 数据库模型 + 仓库 CRUD API |
-| 2 | 审查引擎：LangGraph Workflow + Tool Registry + 基础 Reviewer |
+| 2 | 审查引擎：LangGraph Workflow + 有界上下文读取 + 基础 Reviewer |
 | 3 | CRG 集成：按 crg-integration-plan.md 实施 |
 | 4 | 前端骨架：React + Vite + Tailwind CSS + 路由 |
 | 5 | 前端页面：Dashboard + RepoList + SubmitReviewModal + ReviewDetail + PromptWorkbench |

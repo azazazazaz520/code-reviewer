@@ -1,5 +1,10 @@
 # Workflow 模块化实施方案
 
+> 本文记录的旧模块化方案已由 2026-09-07 的精简流程取代。当前实现以
+> `prepare_review.py` 合并规划、确定性校验和上下文准备，以 `run_reviews.py`
+> 执行 Reviewer 批次；`collect_context.py` 与 `reflection.py` 已删除。以下内容仅保留
+> 作为历史决策记录，新的修改应遵循 `docs/system-design.md` 和 ADR 0003。
+
 ## 1. 方案定位
 
 本文档记录 `backend/app/engine/workflow.py` 的模块化拆分方案。目标是落实

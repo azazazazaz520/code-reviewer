@@ -10,6 +10,13 @@
 > 使用 `safeStorage` 管理模型和代码托管凭据，并在 sidecar 重启时注入。本文中
 > “P0/P1/P1.5”仅用于说明实施批次，不得直接复制到用户界面文案。
 
+> 审查流程修订（2026-09-07）：审查执行已收口为
+> `Load PR → Prepare Review → Run Reviews → Generate Report` 四个节点。
+> Prepare Review 一次完成规划、确定性校验、变更文件上下文读取和 Reviewer 批次构造；
+> Run Reviews 每个批次执行一次结构化请求，模型最多提出一次 `context_requests`，
+> 随后只允许一次补充请求。JSON 格式修复只在解析失败时触发一次；主审查、补充与修复请求均显式关闭思考模式，避免隐藏推理消耗结构化输出预算。
+> 默认关闭 CRG 深度上下文，历史反思和自由 Tool 循环不再属于运行时流程。
+
 ## 1. 方案结论
 
 当前应用通过 /settings 页面提供本机工作区的设置中心，统一查看外观、模型服务、代码托管、审查行为、提示词工作台、数据目录和运行诊断。非敏感配置支持显式保存和版本冲突检查；模型连接支持使用当前配置或页面草稿测试；Electron 模式支持通过受控桌面桥接管理安全凭据，并在 sidecar 重启时注入。
@@ -53,7 +60,7 @@
 backend/app/config.py 当前同时包含以下配置：
 
 - 数据库路径、仓库存储路径和前端静态文件路径；
-- 反思轮数、Reviewer 超时、上下文文件数和 CRG 开关；
+- Reviewer 批次字符数、上下文文件/字符上限、补充上下文上限、执行时长、并行度和 CRG 开关；
 - 提示词请求、输入、输出和会话限制；
 - LLM 服务类型、模型、Temperature、最大 Token、API Key 和 Base URL；
 - GitHub 与 Gitee Token；
@@ -63,9 +70,9 @@ backend/app/config.py 当前同时包含以下配置：
 
 当前代码与设置字段之间还存在需要在 P1 前处理的差异：
 
-- `max_reflection_rounds`、`context_files_per_round` 在 Workflow Node 中被读取；`repos_dir` 在新仓库创建时被读取；
+- 审查参数由 `Prepare Review` 和 `Run Reviews` 在任务开始时读取并固定到任务快照；`repos_dir` 在新仓库创建时被读取；
 - `reviewer_timeout_seconds` 和 `llm_provider` 目前只有配置声明，没有实际消费者，不能直接作为“已可调配置”展示；
-- `crg_enabled` 目前不是由 `settings.crg_enabled` 控制，Workflow 初始值为 `True`，上下文收集阶段再根据 CRG 调用结果改写状态；
+- `crg_enabled` 默认关闭，只有显式启用时才构建代码数据库并读取关联上下文；
 - PromptOptimizer 是 API 模块级对象，其 PromptSessionStore 在构造时固定 TTL、容量和上下文长度，更新配置不会自动改变既有会话仓库；
 - LLMProvider 在首次使用时创建全局单例，并将 API Key、Base URL、模型和调用参数缓存到实例中。
 
@@ -89,9 +96,9 @@ Electron 主进程已经提供：
 | 设置分区 | 内容 | 生效方式 | 优先级 |
 |---|---|---|---|
 | 常规与外观 | 跟随系统、浅色、深色 | 立即生效 | P0 |
-| 模型服务 | 当前 OpenAI 兼容服务、模型、Base URL、凭据状态、Temperature、最大输出 Token | 新任务使用配置快照；凭据需要重启 sidecar | P0 只读，P1 编辑 |
+| 模型服务 | 当前 OpenAI 兼容服务、模型、Base URL、凭据状态、Temperature，以及主审查、上下文补充和 JSON 修复的独立输出 Token 预算 | 新任务使用配置快照；凭据需要重启 sidecar | P0 只读，P1 编辑 |
 | 代码托管 | GitHub、Gitee 配置状态和连接状态 | 连接测试使用当前有效凭据；凭据需要重启 sidecar | P0 只读，P1.5 编辑 |
-| 审查行为 | 最大反思轮数、上下文文件数、CRG 策略；Reviewer 超时需先完成运行时接入 | 新任务使用配置快照 | P1 |
+| 审查行为 | Reviewer 批次字符数、上下文预算、补充上下文预算、执行时长、并行度和可选 CRG | 新任务使用配置快照 | P1 |
 | 提示词工作台 | 请求超时、最小/最大输入长度、输出 Token、会话 TTL、会话数量和上下文限制 | 新会话或新请求按配置生效 | P1 |
 | 数据与诊断 | 数据目录、仓库根目录、sidecar 状态、版本、打开目录 | 按操作类型生效 | P0 |
 | 关于 | 应用版本、运行模式、API 地址、诊断信息 | 只读 | P0 |
@@ -176,8 +183,16 @@ llm.model
 llm.base_url
 llm.temperature
 llm.max_tokens
-review.max_reflection_rounds
-review.context_files_per_round
+llm.review_max_tokens
+llm.supplement_max_tokens
+llm.json_repair_max_tokens
+review.review_batch_max_chars
+review.review_context_max_files
+review.review_context_max_chars
+review.supplement_context_max_chars
+review.review_context_padding_lines
+review.max_review_duration_seconds
+review.review_parallelism
 review.crg_enabled
 prompt.timeout_seconds
 prompt.min_input_chars
@@ -189,7 +204,7 @@ prompt.session_max_context_chars
 storage.repos_dir
 ~~~
 
-`review.reviewer_timeout_seconds` 暂不进入 UserSettings，直到审查执行路径实际使用该值并有超时回归测试。`llm.provider` 只作为当前实现的只读能力标识，第一阶段固定为 `deepseek-openai-compatible`，不宣称已经具备原生多供应商切换能力。
+`review.reviewer_timeout_seconds` 和 `llm.max_tokens` 保留为内部兼容配置，不在审查页面编辑；Reviewer 的三个阶段预算使用上述独立字段。`llm.provider` 只作为当前实现的只读能力标识。
 
 ### 5.3 SecretSettings
 
@@ -218,12 +233,12 @@ gitee.token
 
 ~~~json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "config_version": 3,
   "sources": {
     "llm.model": "user_file",
     "llm.base_url": "env",
-    "review.max_reflection_rounds": "default"
+    "review.review_batch_max_chars": "default"
   },
   "settings": {
     "llm": {
@@ -231,7 +246,10 @@ gitee.token
       "model": "deepseek-v4-flash",
       "base_url": "https://api.deepseek.com/v1",
       "temperature": 0.1,
-      "max_tokens": 4096
+      "max_tokens": 4096,
+      "review_max_tokens": 4096,
+      "supplement_max_tokens": 2048,
+      "json_repair_max_tokens": 1024
     }
   },
   "secret_status": {
@@ -268,12 +286,20 @@ P0/P1 后端 API 只负责非敏感设置读取、非敏感配置保存和使用
     "llm": {
       "model": "deepseek-v4-flash",
       "temperature": 0.1,
-      "max_tokens": 4096
+      "max_tokens": 4096,
+       "review_max_tokens": 4096,
+       "supplement_max_tokens": 2048,
+       "json_repair_max_tokens": 1024
     },
     "review": {
-      "max_reflection_rounds": 3,
-      "context_files_per_round": 20,
-      "crg_enabled": true
+      "review_batch_max_chars": 12000,
+      "review_context_max_files": 10,
+      "review_context_max_chars": 32000,
+      "supplement_context_max_chars": 12000,
+      "review_context_padding_lines": 24,
+      "max_review_duration_seconds": 1200,
+      "review_parallelism": 3,
+      "crg_enabled": false
     }
   }
 }
@@ -289,7 +315,7 @@ PATCH 响应需要返回逐字段生效范围：
   "config_version": 4,
   "changed": [
     {"path": "llm.model", "effective_for": "new_reviews", "requires_restart": false},
-    {"path": "review.max_reflection_rounds", "effective_for": "new_reviews", "requires_restart": false}
+    {"path": "review.review_batch_max_chars", "effective_for": "new_reviews", "requires_restart": false}
   ]
 }
 ~~~
@@ -425,9 +451,8 @@ backend/app/engine/llm.py            # 消除全局缓存不刷新或改为配�
 backend/app/services/prompt_optimizer.py # 让新会话使用最新会话限制
 backend/app/services/git_host.py     # 使用新的有效凭据来源
 backend/app/engine/workflow.py       # 注入 ReviewTask 配置快照和 CRG 策略
-backend/app/engine/nodes/collect_context.py # 使用配置快照控制上下文和 CRG
-backend/app/engine/nodes/reflection.py      # 使用配置快照控制反思轮数
-backend/app/engine/nodes/run_reviews.py     # 若启用 Reviewer 超时，接入实际执行路径
+backend/app/engine/nodes/prepare_review.py # 规划、校验、上下文读取和批次构造
+backend/app/engine/nodes/run_reviews.py     # 有界结构化审查与 FindingGate
 ~~~
 
 ### 7.3 Electron
@@ -506,7 +531,7 @@ P0 不包含 PATCH、连接测试、凭据清除、sidecar 重启或配置文件
 - 让新 ReviewTask 在领取时读取配置快照；
 - 让新 Prompt 会话使用最新会话限制，已有会话保留创建时契约；
 - 为全局 LLM 客户端增加刷新或配置版本机制；
-- 在 Reviewer 超时真正接入执行路径并补充测试前，不在页面显示 `reviewer_timeout_seconds`。
+- 审查超时和并行度已由 `Run Reviews` 实际消费，并通过任务快照固定。
 
 P1 不保存 API Key 或 Git Token。连接测试只能使用当前有效凭据；表单中的敏感字段不通过浏览器请求体传递。
 
@@ -613,7 +638,7 @@ Electron 可以选择目录、打开路径和使用安全存储。浏览器模�
 - Prompt 新会话使用新的 TTL/容量/上下文限制，已有会话维持原有契约；
 - LLM 连接测试能够区分成功、认证失败、超时和服务不可用；
 - Git 主机连接测试不会把凭据写入日志；
-- CRG 开关和 Reviewer 超时各自有真实消费者和回归测试，未接入前不得出现在响应模型；
+- CRG 开关、三个阶段 Token 预算、批次和上下文上限各自有真实消费者和回归测试；
 - 配置加载失败时保留原配置，不产生半保存状态；
 - `/api/settings` router 已在 `backend/app/main.py` 注册；
 - 历史审查、仓库管理和提示词接口不受设置 API 影响。
