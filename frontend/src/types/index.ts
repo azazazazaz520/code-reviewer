@@ -94,6 +94,8 @@ export interface ReviewerOutputAttempt {
   truncated: boolean;
   finish_reason?: string | null;
   usage?: Record<string, number>;
+  max_tokens?: number | null;
+  thinking?: string | null;
 }
 
 export interface ReviewerOutputTrace {
@@ -101,16 +103,17 @@ export interface ReviewerOutputTrace {
   candidate_findings: Finding[];
   input_coverage?: {
     truncated_inputs?: number;
+    critical_truncated_inputs?: number;
+    critical_truncation_events?: string[];
+    context_limited_inputs?: number;
+    context_limit_events?: string[];
     omitted_files?: string[];
-    tool_requests?: number;
-    tool_calls?: number;
-    tool_rounds?: number;
-    tool_budget_exhausted?: boolean;
-    tool_cache_hits?: number;
-    tool_cache_misses?: number;
-    tool_error_events?: Array<Record<string, unknown>>;
-    model_decision_errors?: number;
-    model_decision_events?: Array<Record<string, unknown>>;
+    context_requests?: number;
+    context_reads?: number;
+    context_cache_hits?: number;
+    context_request_failures?: number;
+    context_request_failure_events?: Array<Record<string, unknown>>;
+    output_repair_failures?: number;
     provider_requests?: number;
     llm_prompt_tokens?: number;
     llm_completion_tokens?: number;
@@ -126,6 +129,7 @@ export interface ReviewQualityMetrics {
   candidate_findings: number;
   accepted_findings: number;
   filtered_findings: number;
+  duplicate_findings?: number;
   truncated_outputs?: number;
   located_findings: number;
   static_evidence_findings: number;
@@ -139,7 +143,10 @@ export interface ReviewQualityMetrics {
   extraction_errors?: Array<Record<string, unknown>>;
   query_results?: number;
   context_errors?: Record<string, string>;
-  tool_errors?: number;
+  context_requests?: number;
+  context_request_failures?: number;
+  context_request_failure_events?: Array<Record<string, unknown>>;
+  output_repair_failures?: number;
   planned_files?: number;
   covered_files?: number;
   uncovered_files?: string[];
@@ -148,6 +155,10 @@ export interface ReviewQualityMetrics {
   context_covered_hunks?: number;
   uncovered_hunks?: string[];
   truncated_inputs?: number;
+  critical_truncated_inputs?: number;
+  critical_truncation_events?: string[];
+  context_limited_inputs?: number;
+  context_limit_events?: string[];
   coverage_status?: string | null;
   planned_units?: number;
   reviewed_units?: number;
@@ -169,15 +180,12 @@ export interface ReviewQualityMetrics {
   llm_prompt_cache_hit_tokens?: number;
   llm_prompt_cache_miss_tokens?: number;
   llm_prompt_cache_hit_rate?: number;
-  tool_calls?: number;
-  tool_requests?: number;
-  cache_hits?: number;
-  cache_misses?: number;
-  read_file_requests?: number;
-  read_file_cache_hits?: number;
-  read_file_cache_misses?: number;
-  read_file_errors?: number;
-  tool_budget_exhausted?: boolean;
+  context_reads?: number;
+  context_read_requests?: number;
+  context_cache_hits?: number;
+  context_cache_misses?: number;
+  context_read_errors?: number;
+  failed_batches?: number;
   elapsed_seconds?: number;
   budget_exhausted?: boolean;
   budget_exhausted_reason?: string | null;

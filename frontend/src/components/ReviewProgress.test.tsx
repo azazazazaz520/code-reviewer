@@ -41,16 +41,15 @@ describe("ReviewProgress", () => {
         logs={[
           log("1", "来源已准备", "prepare_source"),
           log("2", "变更已获取", "load_pr"),
-          log("3", "正在收集上下文", "collect_context"),
-          log("4", "正在规划策略", "planning"),
+          log("3", "正在准备审查", "prepare_review"),
         ]}
         logPolling
       />,
     );
 
-    expect(screen.getByRole("progressbar", { name: "审查阶段进度" })).toHaveAttribute("aria-valuenow", "3");
+    expect(screen.getByRole("progressbar", { name: "审查阶段进度" })).toHaveAttribute("aria-valuenow", "2");
     expect(screen.getByText("准备审查来源").closest("li")).toHaveAttribute("data-status", "done");
-    expect(screen.getByText("规划策略").closest("li")).toHaveAttribute("data-status", "active");
+    expect(screen.getByText("准备审查").closest("li")).toHaveAttribute("data-status", "active");
     expect(screen.getByText("执行审查").closest("li")).toHaveAttribute("data-status", "pending");
   });
 
@@ -63,7 +62,7 @@ describe("ReviewProgress", () => {
     );
 
     expect(screen.getByRole("status")).toHaveTextContent("审查完成");
-    expect(screen.getAllByRole("listitem")).toHaveLength(7);
+    expect(screen.getAllByRole("listitem")).toHaveLength(5);
     expect(screen.getByText("生成报告").closest("li")).toHaveAttribute("data-status", "done");
 
     rerender(
@@ -79,6 +78,6 @@ describe("ReviewProgress", () => {
 
     expect(screen.getByRole("status")).toHaveTextContent("审查失败");
     expect(screen.getByText("执行审查").closest("li")).toHaveAttribute("data-status", "failed");
-    expect(screen.getByText("反思").closest("li")).toHaveAttribute("data-status", "pending");
+    expect(screen.getByText("生成报告").closest("li")).toHaveAttribute("data-status", "pending");
   });
 });

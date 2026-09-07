@@ -8,10 +8,8 @@ import { formatErrorMessage } from "../utils/error-message";
 const reviewSteps = [
   { key: "prepare_source", label: "准备审查来源" },
   { key: "load_pr", label: "获取代码变更" },
-  { key: "collect_context", label: "收集上下文" },
-  { key: "planning", label: "规划策略" },
+  { key: "prepare_review", label: "准备审查" },
   { key: "run_reviews", label: "执行审查" },
-  { key: "reflection", label: "反思" },
   { key: "generate_report", label: "生成报告" },
 ] as const;
 

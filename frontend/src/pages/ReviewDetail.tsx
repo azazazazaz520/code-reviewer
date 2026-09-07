@@ -425,7 +425,7 @@ export default function ReviewDetail() {
           <div>
             <h2 className="font-semibold">审查结果需要复核</h2>
             <p className="mt-1 text-sm leading-6">
-              本次审查存在未覆盖范围、工具错误或输出截断。当前 Finding 只代表已完成且通过门槛的部分，不能作为完整审查结论；请展开“审查诊断”查看具体限制。
+              本次审查存在未完成批次、必要上下文读取失败或输出截断。当前 Finding 只代表已完成且通过门槛的部分，不能作为完整审查结论；请展开“审查诊断”查看具体限制。
             </p>
           </div>
         </div>
@@ -452,15 +452,26 @@ export default function ReviewDetail() {
               已完成审查单元：{executionQuality?.reviewed_units ?? executionQuality?.completed_units ?? 0} / {executionQuality?.planned_units ?? 0}
             </span>
             <span>
+              已完成 Reviewer 批次：{executionQuality?.reviewed_reviewer_assignments ?? executionQuality?.completed_assignments ?? 0} / {executionQuality?.planned_reviewer_assignments ?? executionQuality?.planned_assignments ?? 0}
+            </span>
+            <span>
               上下文 Hunk：{executionQuality?.context_covered_hunks ?? executionQuality?.covered_hunks ?? 0} / {executionQuality?.planned_hunks ?? 0}
             </span>
-            <span>模型调用：{executionQuality?.primary_llm_calls ?? 0}</span>
+            <span>主审查调用：{executionQuality?.primary_llm_calls ?? 0}</span>
             <span>
-              Tool 请求：{executionQuality?.tool_requests ?? executionQuality?.tool_calls ?? 0}
+              上下文请求：{executionQuality?.context_requests ?? 0}
             </span>
             <span>
-              文件缓存命中：{executionQuality?.read_file_cache_hits ?? executionQuality?.cache_hits ?? 0}
+              上下文读取：{executionQuality?.context_reads ?? 0} 次
             </span>
+            <span>
+              上下文缓存命中：{executionQuality?.context_cache_hits ?? 0} 次
+            </span>
+            {(executionQuality?.context_limited_inputs ?? 0) > 0 && (
+              <span>
+                关联上下文已按预算收敛：{executionQuality?.context_limited_inputs} 项
+              </span>
+            )}
             {hasPromptCacheMetrics && (
               <span>
                 Prompt Cache：{((executionQuality?.llm_prompt_cache_hit_rate ?? 0) * 100).toFixed(1)}%
