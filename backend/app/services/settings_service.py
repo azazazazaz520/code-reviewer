@@ -10,7 +10,11 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.config import settings
+from app.config import (
+    REVIEW_CONTEXT_HARD_MAX_CHARS,
+    REVIEW_CONTEXT_HARD_MAX_FILES,
+    settings,
+)
 from app.services.settings_policy import (
     LLMSettingsPatch,
     PromptSettingsPatch,
@@ -35,24 +39,21 @@ class LLMSettingsSnapshot(BaseModel):
     base_url: str
     temperature: float
     max_tokens: int
+    review_max_tokens: int
+    supplement_max_tokens: int
+    json_repair_max_tokens: int
 
 
 class ReviewSettingsSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    max_reflection_rounds: int
-    max_incremental_reflection_rounds: int
-    context_files_per_round: int
     crg_enabled: bool
-    review_unit_max_chars: int
+    review_batch_max_chars: int
     review_context_max_files: int
     review_context_max_chars: int
+    supplement_context_max_chars: int
     review_context_padding_lines: int
-    max_review_calls: int
     max_review_duration_seconds: int
-    max_tool_rounds: int
-    max_tool_calls_per_unit: int
-    max_related_files_per_unit: int
     review_parallelism: int
 
 
@@ -94,7 +95,7 @@ class SecretStatusSnapshot(BaseModel):
 class EffectiveSettingsSnapshot(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: int = Field(default=1, ge=1)
+    schema_version: int = Field(default=2, ge=1)
     config_version: int = Field(default=0, ge=0)
     sources: dict[str, SettingsSource]
     settings: UserSettingsSnapshot
@@ -123,20 +124,17 @@ _ENV_ALIASES: dict[str, tuple[str, ...]] = {
     "llm_model": ("LLM_MODEL",),
     "llm_temperature": ("LLM_TEMPERATURE",),
     "llm_max_tokens": ("LLM_MAX_TOKENS",),
+    "llm_review_max_tokens": ("LLM_REVIEW_MAX_TOKENS",),
+    "llm_supplement_max_tokens": ("LLM_SUPPLEMENT_MAX_TOKENS",),
+    "llm_json_repair_max_tokens": ("LLM_JSON_REPAIR_MAX_TOKENS",),
     "deepseek_base_url": ("DEEPSEEK_BASE_URL",),
-    "max_reflection_rounds": ("MAX_REFLECTION_ROUNDS",),
-    "max_incremental_reflection_rounds": ("MAX_INCREMENTAL_REFLECTION_ROUNDS",),
-    "context_files_per_round": ("CONTEXT_FILES_PER_ROUND",),
     "crg_enabled": ("CRG_ENABLED",),
-    "review_unit_max_chars": ("REVIEW_UNIT_MAX_CHARS",),
+    "review_batch_max_chars": ("REVIEW_BATCH_MAX_CHARS",),
     "review_context_max_files": ("REVIEW_CONTEXT_MAX_FILES",),
     "review_context_max_chars": ("REVIEW_CONTEXT_MAX_CHARS",),
+    "supplement_context_max_chars": ("SUPPLEMENT_CONTEXT_MAX_CHARS",),
     "review_context_padding_lines": ("REVIEW_CONTEXT_PADDING_LINES",),
-    "max_review_calls": ("MAX_REVIEW_CALLS",),
     "max_review_duration_seconds": ("MAX_REVIEW_DURATION_SECONDS",),
-    "max_tool_rounds": ("MAX_TOOL_ROUNDS",),
-    "max_tool_calls_per_unit": ("MAX_TOOL_CALLS_PER_UNIT",),
-    "max_related_files_per_unit": ("MAX_RELATED_FILES_PER_UNIT",),
     "review_parallelism": ("REVIEW_PARALLELISM",),
     "prompt_timeout_seconds": ("PROMPT_TIMEOUT_SECONDS",),
     "prompt_min_input_chars": ("PROMPT_MIN_INPUT_CHARS",),
@@ -153,19 +151,16 @@ _FIELD_PATHS: dict[str, str] = {
     "llm.base_url": "deepseek_base_url",
     "llm.temperature": "llm_temperature",
     "llm.max_tokens": "llm_max_tokens",
-    "review.max_reflection_rounds": "max_reflection_rounds",
-    "review.max_incremental_reflection_rounds": "max_incremental_reflection_rounds",
-    "review.context_files_per_round": "context_files_per_round",
+    "llm.review_max_tokens": "llm_review_max_tokens",
+    "llm.supplement_max_tokens": "llm_supplement_max_tokens",
+    "llm.json_repair_max_tokens": "llm_json_repair_max_tokens",
     "review.crg_enabled": "crg_enabled",
-    "review.review_unit_max_chars": "review_unit_max_chars",
+    "review.review_batch_max_chars": "review_batch_max_chars",
     "review.review_context_max_files": "review_context_max_files",
     "review.review_context_max_chars": "review_context_max_chars",
+    "review.supplement_context_max_chars": "supplement_context_max_chars",
     "review.review_context_padding_lines": "review_context_padding_lines",
-    "review.max_review_calls": "max_review_calls",
     "review.max_review_duration_seconds": "max_review_duration_seconds",
-    "review.max_tool_rounds": "max_tool_rounds",
-    "review.max_tool_calls_per_unit": "max_tool_calls_per_unit",
-    "review.max_related_files_per_unit": "max_related_files_per_unit",
     "review.review_parallelism": "review_parallelism",
     "prompt.timeout_seconds": "prompt_timeout_seconds",
     "prompt.min_input_chars": "prompt_min_input_chars",
@@ -212,17 +207,67 @@ class SettingsService:
             if not self._initialized:
                 try:
                     stored = self.store.load()
-                    self._validate_stored_settings(stored.settings)
+                    normalized_settings = self._normalize_runtime_limits(stored.settings)
+                    self._validate_stored_settings(normalized_settings)
                 except SettingsStoreError:
                     raise
                 except (TypeError, ValueError) as error:
                     raise SettingsConfigurationError("用户设置文件中的值无效，请修正或删除该文件") from error
 
-                self._stored_settings = copy.deepcopy(stored.settings)
+                self._stored_settings = normalized_settings
                 self._config_version = stored.config_version
                 self._apply_settings(self._stored_settings)
                 self._initialized = True
             return self._snapshot()
+
+    @staticmethod
+    def _normalize_runtime_limits(
+        values: dict[str, dict[str, Any]],
+    ) -> dict[str, dict[str, Any]]:
+        """迁移历史字段，并收敛到当前运行时允许的配置。"""
+        normalized = copy.deepcopy(values)
+        llm = normalized.get("llm")
+        if isinstance(llm, dict):
+            migrations = {
+                "tool_selection_max_tokens": "review_max_tokens",
+                "tool_round_max_tokens": "supplement_max_tokens",
+                "finalize_retry_max_tokens": "json_repair_max_tokens",
+            }
+            for old_name, new_name in migrations.items():
+                if new_name not in llm and old_name in llm:
+                    llm[new_name] = llm[old_name]
+            for old_name in (
+                "tool_selection_max_tokens",
+                "tool_round_max_tokens",
+                "finalize_max_tokens",
+                "finalize_retry_max_tokens",
+            ):
+                llm.pop(old_name, None)
+        review = normalized.get("review")
+        if not isinstance(review, dict):
+            return normalized
+        if "review_batch_max_chars" not in review and "review_unit_max_chars" in review:
+            review["review_batch_max_chars"] = review["review_unit_max_chars"]
+        for old_name in (
+            "max_reflection_rounds",
+            "max_incremental_reflection_rounds",
+            "context_files_per_round",
+            "review_unit_max_chars",
+            "review_context_candidate_limit",
+            "max_review_calls",
+            "max_tool_rounds",
+            "max_tool_calls_per_unit",
+            "max_related_files_per_unit",
+        ):
+            review.pop(old_name, None)
+        for field, limit in (
+            ("review_context_max_files", REVIEW_CONTEXT_HARD_MAX_FILES),
+            ("review_context_max_chars", REVIEW_CONTEXT_HARD_MAX_CHARS),
+        ):
+            value = review.get(field)
+            if isinstance(value, int) and not isinstance(value, bool) and value > limit:
+                review[field] = limit
+        return normalized
 
     def get_snapshot(self) -> EffectiveSettingsSnapshot:
         self.initialize()
@@ -305,7 +350,7 @@ class SettingsService:
 
     def _snapshot(self) -> EffectiveSettingsSnapshot:
         return EffectiveSettingsSnapshot(
-            schema_version=1,
+            schema_version=2,
             config_version=self._config_version,
             sources={
                 path: (
@@ -323,21 +368,24 @@ class SettingsService:
                     base_url=settings.deepseek_base_url,
                     temperature=settings.llm_temperature,
                     max_tokens=settings.llm_max_tokens,
+                    review_max_tokens=settings.llm_review_max_tokens,
+                    supplement_max_tokens=settings.llm_supplement_max_tokens,
+                    json_repair_max_tokens=settings.llm_json_repair_max_tokens,
                 ),
                 review=ReviewSettingsSnapshot(
-                    max_reflection_rounds=settings.max_reflection_rounds,
-                    max_incremental_reflection_rounds=settings.max_incremental_reflection_rounds,
-                    context_files_per_round=settings.context_files_per_round,
                     crg_enabled=settings.crg_enabled,
-                    review_unit_max_chars=settings.review_unit_max_chars,
-                    review_context_max_files=settings.review_context_max_files,
-                    review_context_max_chars=settings.review_context_max_chars,
+                    review_batch_max_chars=settings.review_batch_max_chars,
+                    review_context_max_files=min(
+                        settings.review_context_max_files,
+                        REVIEW_CONTEXT_HARD_MAX_FILES,
+                    ),
+                    review_context_max_chars=min(
+                        settings.review_context_max_chars,
+                        REVIEW_CONTEXT_HARD_MAX_CHARS,
+                    ),
+                    supplement_context_max_chars=settings.supplement_context_max_chars,
                     review_context_padding_lines=settings.review_context_padding_lines,
-                    max_review_calls=settings.max_review_calls,
                     max_review_duration_seconds=settings.max_review_duration_seconds,
-                    max_tool_rounds=settings.max_tool_rounds,
-                    max_tool_calls_per_unit=settings.max_tool_calls_per_unit,
-                    max_related_files_per_unit=settings.max_related_files_per_unit,
                     review_parallelism=settings.review_parallelism,
                 ),
                 prompt=PromptSettingsSnapshot(

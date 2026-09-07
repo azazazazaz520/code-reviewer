@@ -19,6 +19,9 @@ export default function ModelSettings({ snapshot, onSaved, onSecretChanged }: Mo
   const [baseUrl, setBaseUrl] = useState(llm.base_url);
   const [temperature, setTemperature] = useState(String(llm.temperature));
   const [maxTokens, setMaxTokens] = useState(String(llm.max_tokens));
+  const [reviewMaxTokens, setReviewMaxTokens] = useState(String(llm.review_max_tokens));
+  const [supplementMaxTokens, setSupplementMaxTokens] = useState(String(llm.supplement_max_tokens));
+  const [jsonRepairMaxTokens, setJsonRepairMaxTokens] = useState(String(llm.json_repair_max_tokens));
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -31,7 +34,10 @@ export default function ModelSettings({ snapshot, onSaved, onSecretChanged }: Mo
     setBaseUrl(llm.base_url);
     setTemperature(String(llm.temperature));
     setMaxTokens(String(llm.max_tokens));
-  }, [llm.base_url, llm.max_tokens, llm.model, llm.temperature]);
+    setReviewMaxTokens(String(llm.review_max_tokens));
+    setSupplementMaxTokens(String(llm.supplement_max_tokens));
+    setJsonRepairMaxTokens(String(llm.json_repair_max_tokens));
+  }, [llm.base_url, llm.json_repair_max_tokens, llm.max_tokens, llm.model, llm.review_max_tokens, llm.supplement_max_tokens, llm.temperature]);
 
   const save = async () => {
     setSaving(true);
@@ -44,6 +50,9 @@ export default function ModelSettings({ snapshot, onSaved, onSecretChanged }: Mo
           base_url: baseUrl.trim(),
           temperature: Number(temperature),
           max_tokens: Number(maxTokens),
+          review_max_tokens: Number(reviewMaxTokens),
+          supplement_max_tokens: Number(supplementMaxTokens),
+          json_repair_max_tokens: Number(jsonRepairMaxTokens),
         },
       });
       setMessage("模型服务设置已保存");
@@ -74,7 +83,7 @@ export default function ModelSettings({ snapshot, onSaved, onSecretChanged }: Mo
   };
 
   return (
-    <SectionCard title="模型服务" description="配置模型服务地址、模型和生成参数。保存后，新建的 Prompt 请求使用最新设置。">
+    <SectionCard title="模型服务" description="配置模型服务地址、模型和生成参数。保存后，新建的审查和 Prompt 请求使用最新设置。">
       <SettingsForm onSubmit={save} saving={saving} message={message} error={error}>
         <div className="flex items-start gap-3 border-b border-border/70 py-4">
           <SettingField label="服务类型" value="OpenAI 兼容模型服务" description="可连接符合 OpenAI API 规范的模型服务。" />
@@ -83,6 +92,9 @@ export default function ModelSettings({ snapshot, onSaved, onSecretChanged }: Mo
         <SettingsInput label="Base URL" value={baseUrl} onChange={setBaseUrl} description={`当前来源：${source("llm.base_url")}`} />
         <SettingsInput label="Temperature" type="number" min={0} max={2} step={0.1} value={temperature} onChange={setTemperature} description="控制生成结果的随机程度，范围为 0～2。" />
         <SettingsInput label="最大输出 Token" type="number" min={1} max={100000} value={maxTokens} onChange={setMaxTokens} description="限制单次模型响应的最大长度。" />
+        <SettingsInput label="主要审查最大输出 Token" type="number" min={1} max={100000} value={reviewMaxTokens} onChange={setReviewMaxTokens} description={`主要审查请求的独立预算，当前来源：${source("llm.review_max_tokens")}`} />
+        <SettingsInput label="补充审查最大输出 Token" type="number" min={1} max={100000} value={supplementMaxTokens} onChange={setSupplementMaxTokens} description={`一次性补充上下文后的独立预算，当前来源：${source("llm.supplement_max_tokens")}`} />
+        <SettingsInput label="JSON 修复最大输出 Token" type="number" min={1} max={100000} value={jsonRepairMaxTokens} onChange={setJsonRepairMaxTokens} description={`仅在结构化结果无效时使用，当前来源：${source("llm.json_repair_max_tokens")}`} />
         <div className="flex flex-wrap items-center gap-3 border-b border-border/70 py-4">
           <button type="button" className="min-h-10 rounded-lg border border-border px-3 text-sm transition-colors hover:bg-muted disabled:pointer-events-none disabled:opacity-50" onClick={() => void testConnection()} disabled={testing || saving}>
             {testing ? "测试中…" : "测试模型服务"}
